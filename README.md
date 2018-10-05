@@ -1,6 +1,8 @@
 # bncs.py
 Python library for classic Battle.net client development.
 
+For more information on available functions and classes, refer to [the wiki](https://github.com/Davnit/bncs.py/wiki).
+
 ## Packages
 * `bncs` - contains functions related to the Battle.net Chat Service
   * `DataBuffer`, `DataReader` - binary packet buffer for writing and reading respectively
