@@ -1,5 +1,8 @@
 
+from calendar import timegm
+from datetime import datetime, timedelta, tzinfo
 from struct import pack, unpack, calcsize
+
 
 def make_dword(str):
     """Converts a 4-byte string into a DWORD."""
@@ -61,6 +64,25 @@ def format_buffer(data):
     return ret + '\n'
 
 
+_EPOCH_AS_FILETIME = 116444736000000000
+_HUNDREDS_OF_NANOS = 10000000
+_ZERO = timedelta(0)
+
+
+class _UTC(tzinfo):
+    def utcoffset(self, dt):
+        return _ZERO
+
+    def tzname(self, dt):
+        return "UTC"
+
+    def dst(self, dt):
+        return _ZERO
+
+
+_utc = _UTC()
+
+
 class DataBuffer(object):
     def __init__(self, data=None):
         if isinstance(data, (bytes, bytearray)):
@@ -113,6 +135,12 @@ class DataBuffer(object):
         """Inserts a null-terminated string into the buffer."""
         self.insert_raw(s.encode(encoding) + b'\0')
 
+    def insert_filetime(self, dt):
+        if dt.tzinfo is None or (dt.tzinfo.utcoffset(dt) is None):
+            dt = dt.replace(tzinfo=_utc)
+        ft = _EPOCH_AS_FILETIME + (timegm(dt.timetuple()) * _HUNDREDS_OF_NANOS)
+        self.insert_long(ft + (dt.microsecond * 10))
+
     def insert_format(self, fmt, *args):
         """Inserts multiple objects into the buffer with the specified format from struct.pack."""
         self.insert_raw(pack(fmt, *args))
@@ -163,10 +191,17 @@ class DataReader(object):
         return unpack('<Q', self.get_raw(8))[0]
 
     def get_string(self, encoding='utf-8', term=b'\0'):
-        """Returns a string starting at the current position and going until the next NULL-byte (or sequence specified by 'term')."""
+        """Returns a string starting at the current position and going until the next NULL-byte
+            (or sequence specified by 'term')."""
         r = self.get_raw(self.data.index(term, self.position) - self.position).decode(encoding)
         self.position += len(term)
         return r
+
+    def get_filetime(self):
+        ft = self.get_long()
+        (s, ns100) = divmod(ft - _EPOCH_AS_FILETIME, _HUNDREDS_OF_NANOS)
+        dt = datetime.utcfromtimestamp(s)
+        return dt.replace(microsecond=(ns100 // 10))
 
     def get_format(self, fmt):
         """Returns multiple objects from the specified format from struct.unpack."""
