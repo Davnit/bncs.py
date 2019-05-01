@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from setuptools import setup
+from setuptools import setup, find_packages
 
 
 setup(
@@ -10,5 +10,5 @@ setup(
     author='Davnit',
     author_email='david@davnit.net',
     url='https://github.com/Davnit/bncs.py',
-    packages=['bncs', 'bnls']
+    packages=find_packages()
 )
