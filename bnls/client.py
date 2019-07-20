@@ -3,7 +3,6 @@ import asyncio
 from binascii import crc32
 import logging
 import socket
-from struct import unpack
 import threading
 
 from .packets import *
