@@ -112,7 +112,7 @@ def do_hash(buffer):
     buffer[4] = c_uint32(buffer[4] + e).value
 
 
-class xsha1(object):
+class xsha1:
     def __init__(self, data=None):
         self.digest_size = 20
         self.block_size = 4

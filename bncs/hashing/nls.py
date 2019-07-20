@@ -132,7 +132,7 @@ def calculate_AMK(A, M, K):
     return H(i2b(A, 32), M, K)
 
 
-class NLS_Session(object):
+class NLS_Session:
     def __init__(self, username, version=2, private=None):
         self.version = version
         self.username = username.upper()
