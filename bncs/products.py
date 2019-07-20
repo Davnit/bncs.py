@@ -22,7 +22,7 @@ LOGON_NEW = 2       # New logon system (NLS)
 LOGON_CHAT = -2     # Legacy telnet CHAT protocol
 
 
-class BncsProduct(object):
+class BncsProduct:
     def __init__(self, code, full_name, bnls_id=None, num_keys=None, channel=None, logon_type=None):
         self.code = code
         self.name = full_name
@@ -39,8 +39,38 @@ class BncsProduct(object):
         """Returns TRUE if the product has a known logon system."""
         return self.logon_type != -1
 
+    @staticmethod
+    def get(pid):
+        """Returns the product identified by the ID.
 
-BNCS_PRODUCTS = {
+            ID can be the DWORD (both string and int), the full name of the product, or the BNLS ID.
+            """
+        if isinstance(pid, str):
+            pid = pid.upper()
+
+            # First try the product code DWORD-string
+            if len(pid) == 4:
+                if pid in products.keys():
+                    return products.get(pid)
+
+                rid = ''.join(reversed(id))
+                if rid in products.keys():
+                    return products.get(rid)
+
+            # Next try the full name of the product.
+            for prod in products.values():
+                if prod.name.upper() == pid:
+                    return prod
+
+        elif isinstance(pid, int):
+            for prod in products.values():
+                if prod.get_product_dword() == pid or prod.bnls_id == pid:
+                    return prod
+
+        return None
+
+
+products = {
     PRODUCT_STAR: BncsProduct(PRODUCT_STAR, "StarCraft", 0x01, 0, "StarCraft", LOGON_NONE),
     PRODUCT_SEXP: BncsProduct(PRODUCT_SEXP, "StarCraft: Brood War", 0x02, 0, "Brood War", LOGON_NONE),
     PRODUCT_W2BN: BncsProduct(PRODUCT_W2BN, "WarCraft II: Battle.net Edition", 0x03, 1, "WarCraft II", LOGON_OLD),
@@ -54,33 +84,3 @@ BNCS_PRODUCTS = {
     PRODUCT_JSTR: BncsProduct(PRODUCT_JSTR, "Japanese StarCraft", 0x06, 0, "StarCraft", LOGON_NONE),
     PRODUCT_CHAT: BncsProduct(PRODUCT_CHAT, "Telnet Chat", None, 0, "Telnet", LOGON_CHAT)
 }
-
-
-def get_product(pid):
-    """Returns the product identified by the ID.
-
-    ID can be the DWORD (both string and int), the full name of the product, or the BNLS ID.
-    """
-    if isinstance(pid, str):
-        pid = pid.upper()
-
-        # First try the product code DWORD-string
-        if len(pid) == 4:
-            if pid in BNCS_PRODUCTS.keys():
-                return BNCS_PRODUCTS.get(pid)
-
-            rid = ''.join(reversed(id))
-            if rid in BNCS_PRODUCTS.keys():
-                return BNCS_PRODUCTS.get(rid)
-
-        # Next try the full name of the product.
-        for prod in BNCS_PRODUCTS.values():
-            if prod.name.upper() == pid:
-                return prod
-
-    elif isinstance(pid, int):
-        for prod in BNCS_PRODUCTS.values():
-            if prod.get_product_dword() == pid or prod.bnls_id == pid:
-                return prod
-
-    return None
