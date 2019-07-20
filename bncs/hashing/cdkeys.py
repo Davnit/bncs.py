@@ -1,5 +1,5 @@
 
-from bncs.hashing.xsha import xsha1
+from .xsha import xsha1
 
 from struct import pack, unpack
 from ctypes import c_byte, c_int32, c_uint32

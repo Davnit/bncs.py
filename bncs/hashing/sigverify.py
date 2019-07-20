@@ -1,8 +1,7 @@
 
-from bncs.hashing.nls import b2i, i2b
-from bncs.common.buffer import DataBuffer
-
 from socket import inet_aton
+
+from .nls import b2i, i2b
 
 
 DEFAULT_KEY = bytearray(b'\x01\x00\x01\x00')
@@ -28,6 +27,7 @@ def decode_signature(bytes_sig, bytes_key=None, bytes_mod=None):
     signature = b2i(bytes_sig)
 
     return i2b(pow(signature, key, mod), 128)
+
 
 def check_signature(bytes_sig, server_ip, bytes_key=None, bytes_mod=None):
     """Verifies a server's signature against the specified IP address.

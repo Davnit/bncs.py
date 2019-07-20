@@ -1,7 +1,7 @@
 
-from bncs.hashing.nls import i2b
-
 from ctypes import c_byte, c_uint32
+
+from .nls import i2b
 
 
 bitmask = {
