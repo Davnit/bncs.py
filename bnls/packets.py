@@ -1,5 +1,5 @@
 
-from bncs.buffer import DataBuffer, DataReader, format_buffer
+from bncs.buffer import DataBuffer, DataReader
 
 
 # Standard BNLS packet constants
@@ -42,7 +42,7 @@ class BnlsPacket(DataBuffer):
         return super().__len__() + 3
 
     def __str__(self):
-        return format_buffer(self.get_data())
+        return "BNLS Packet 0x%0.2X (length: %i)" % (self.id, len(self))
 
     def get_data(self):
         pak = DataBuffer()
@@ -63,6 +63,9 @@ class BnlsReader(DataReader):
 
     def __len__(self):
         return self.length
+
+    def __str__(self):
+        return "BNLS Packet 0x%0.2X (length: %i)" % (self.id, self.length)
 
     @property
     def actual_length(self):
