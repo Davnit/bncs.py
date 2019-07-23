@@ -115,7 +115,7 @@ class BnlsClient:
         self.send_packet(pak)
 
         try:
-            pak = await asyncio.wait_for(self.get_packet(BNLS_AUTHORIZE), timeout=1000)
+            pak = await asyncio.wait_for(self.get_packet(BNLS_AUTHORIZE), timeout=1)
         except asyncio.TimeoutError:
             log.warning("BNLS authentication timed out.")
             return None
@@ -129,7 +129,7 @@ class BnlsClient:
         self.send_packet(pak)
 
         try:
-            pak = await asyncio.wait_for(self.get_packet(BNLS_AUTHORIZEPROOF), timeout=1000)
+            pak = await asyncio.wait_for(self.get_packet(BNLS_AUTHORIZEPROOF), timeout=1)
         except asyncio.TimeoutError:
             log.error("BNLS authentication failed.")
             return None
@@ -138,7 +138,7 @@ class BnlsClient:
         self._external_ip = pak.get_ipv4()
         return status == 0
 
-    async def request_version_byte(self, product, timeout=1000):
+    async def request_version_byte(self, product, timeout=1):
         """ Requests the version byte for a product.
 
             - Product can be either the BNLS ID or 4-character product code (ex: SEXP)
@@ -176,7 +176,7 @@ class BnlsClient:
         else:
             return pak.get_dword()
 
-    async def check_version(self, product, timestamp, archive, formula, flags=0, timeout=10000):
+    async def check_version(self, product, timestamp, archive, formula, flags=0, timeout=5):
         """ Requests a version check for a product.
 
             - product can be either the BNLS ID or 4-character product code (ex: SEXP)
