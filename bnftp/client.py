@@ -32,6 +32,7 @@ class BnftpClient:
         version = 0x200 if key else 0x100
         filetime = request.get("timestamp", 0)
         product = request.get("product", "D2DV")
+        start = request.get("start", 0)
         if not isinstance(filetime, (int, datetime)):
             raise TypeError("Invalid type for timestamp. Must be int or datetime, got %s." % type(filetime).__name__)
 
@@ -62,7 +63,7 @@ class BnftpClient:
 
         # This part is sent later for v2
         sub = DataBuffer()
-        sub.insert_dword(request.get("start", 0))
+        sub.insert_dword(start)
         if isinstance(filetime, int):
             sub.insert_long(filetime)
         else:
@@ -128,7 +129,7 @@ class BnftpClient:
         # Receive and write the file to disk.
         target = target or filename
         remaining = file_size
-        with open(target, 'wb') as fh:
+        with open(target, 'wb' if start == 0 else 'ab') as fh:
             while remaining > 0:
                 chunk_size = 1024 if remaining > 1024 else remaining
                 data = await reader.readexactly(chunk_size)
