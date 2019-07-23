@@ -86,8 +86,8 @@ class BnftpClient:
 
         # v2 authentication
         if key:
-            s_token = pak.get_dword()
-            c_token = random.getrandbits(32)
+            s_token = pak.get_dword()               # Server token
+            c_token = random.getrandbits(32)        # Client token
 
             log.info("Authenticating...")
             pak = DataBuffer()
@@ -96,7 +96,7 @@ class BnftpClient:
             pak.insert_dword(len(key))
             pak.insert_dword(key.product)
             pak.insert_dword(key.public)
-            pak.insert_dword(0)
+            pak.insert_dword(0)                     # Unknown (0)
             pak.insert_raw(key.get_hash(c_token, s_token))
             pak.insert_string(filename)
 
@@ -116,14 +116,14 @@ class BnftpClient:
         log.debug("Response: \n" + repr(pak))
 
         if not key:
-            pak.get_word()              # "Type" (not sure what this is, sounds like it isn't actually real)
+            pak.get_word()              # "Type" (not sure what this is)
 
         file_size = pak.get_dword()
-        pak.get_long()                  # Banner info
+        pak.get_long()                  # Ad banner info (2 DWORD's)
         filetime = pak.get_filetime()
         filename = pak.get_string()
 
-        log.info("File size: %i", file_size)
+        log.info("File size: %i bytes", file_size)
         log.info("File time: %s", filetime)
 
         # Receive and write the file to disk.
