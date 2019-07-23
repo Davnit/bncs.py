@@ -1,6 +1,7 @@
 
 import asyncio
 from binascii import crc32
+from datetime import datetime
 import logging
 import socket
 import threading
@@ -195,7 +196,7 @@ class BnlsClient:
         pak.insert_dword(product)
         pak.insert_dword(flags)
         pak.insert_dword(cookie)
-        pak.insert_filetime(timestamp)
+        pak.insert_filetime(timestamp) if isinstance(timestamp, datetime) else pak.insert_long(timestamp)
         pak.insert_string(archive)
         pak.insert_string(formula)
         self.send_packet(pak)
