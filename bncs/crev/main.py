@@ -1,5 +1,6 @@
 
 from . import classic
+from . import lockdown
 from . import simple
 
 import re
@@ -29,13 +30,12 @@ def check_version(archive, formula, files=None, platform=None, timestamp=None):
 
     crev_version = get_crev_version(archive)
     if crev_version in [1, 2]:
-        if len(files) < 1:
-            raise CheckRevisionFailedException("Missing required hashing files.")
-
         version, checksum, info = classic.check_version(formula, archive, files)
+    elif crev_version == 3:
+        version, checksum, info = lockdown.check_version(archive, formula, files)
     elif crev_version == 4:
         version, checksum, info = simple.check_version(formula, files[0], archive.endswith("D1.mpq"))
     else:
-        raise CheckRevisionFailedException("CRev version %i not supported." % crev_version)
+        raise CheckRevisionFailedException("Unsupported check revision archive: %s (%s)" % (archive, timestamp))
 
     return version, checksum, info

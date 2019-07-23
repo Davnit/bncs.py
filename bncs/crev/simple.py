@@ -26,6 +26,7 @@ def check_version(seed, exe, include_cert=False):
             file = SignedPEFile(fh)
             cert = list(file.signed_datas)[0].certificates[0]
 
+            # signify library returns the public key as a binary (1/0) string
             public_key = hex(int(str(cert.subject_public_key), 2))
 
         info += b":" + base64.b64encode(sha1(public_key + seed).digest())
