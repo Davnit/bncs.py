@@ -4,6 +4,7 @@ from . import lockdown
 from . import simple
 
 import re
+from socket import inet_ntoa
 
 
 CREV_VERSIONS = {
@@ -19,23 +20,66 @@ class CheckRevisionFailedException(Exception):
         super().__init__(a)
 
 
+class CheckRevisionResults:
+    """Stores the results of a version checking operation."""
+    def __init__(self, product):
+        self.product = product
+        self.version = None
+        self.checksum = None
+        self.info = None
+
+    def __str__(self):
+        if self.success:
+            return "CRev Results: %s - version: %s, checksum: %02.x, info: '%s'" % \
+                   (self.product, self.get_version_string(), self.checksum, self.info)
+        else:
+            return "CRev Results: %s - version check failed" % self.product
+
+    @property
+    def success(self):
+        return None not in [self.version, self.checksum]
+
+    def get_version_string(self):
+        """Returns the version in human-readable format (ex: '1.7.32.9')"""
+        bo = "little" if self.product in ["WAR3", "W3XP"] else "big"
+        return inet_ntoa(self.version.to_bytes(4, bo))
+
+
 def get_crev_version(archive):
     for pattern, version in CREV_VERSIONS.items():
         if re.match(pattern, archive):
             return version
 
 
-def check_version(archive, formula, files=None, platform=None, timestamp=None):
+def check_version(archive, formula, files=None, platform='IX86', timestamp=None):
+    """Runs a CheckRevision() emulation and returns the results.
+
+    archive: the filename provided during authentication
+    formula: the value string used for calculations
+    files: a list of game files that should be checked (usually just the main game EXE)
+    platform: an identifier of the system architecture (ex: IX86, XMAC, PMAC) (default 'IX86')
+    timestamp: the filetime of the archive (not typically required)
+
+    Returns a CheckRevisionResults object with the returned values.
+
+    Officially, the game clients download the archive from BNFTP, extract the contents, and execute the code contained
+        within. Since the archives are all very similar and don't typically change, we skip the downloading bits and
+        just emulate the code that they would've executed.
+    """
     files = files or []
 
-    crev_version = get_crev_version(archive)
-    if crev_version in [1, 2]:
+    check_ver = get_crev_version(archive)
+    if check_ver in [1, 2]:
         version, checksum, info = classic.check_version(formula, archive, files)
-    elif crev_version == 3:
+    elif check_ver == 3:
         version, checksum, info = lockdown.check_version(archive, formula, files)
-    elif crev_version == 4:
+    elif check_ver == 4:
         version, checksum, info = simple.check_version(formula, files[0], archive.endswith("D1.mpq"))
     else:
         raise CheckRevisionFailedException("Unsupported check revision archive: %s (%s)" % (archive, timestamp))
 
-    return version, checksum, info
+    results = CheckRevisionResults(None)    # We don't know the product in this context.
+    results.version = version
+    results.checksum = checksum
+    results.info = info
+    return results
