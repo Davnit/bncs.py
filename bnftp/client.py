@@ -9,13 +9,11 @@ import random
 import socket
 
 
-log = logging.getLogger(__name__)
-
-
 class BnftpClient:
     def __init__(self, host, port=6112):
         self.host = host
         self.port = port
+        self.logger = logging.getLogger("BNFTP")
 
     async def download(self, filename, target=None, key=None, **request):
         """ Downloads a file from the BNFTP server and saves it to disk.
@@ -41,18 +39,18 @@ class BnftpClient:
             key = KeyDecoder.get(key)
 
             if not key.decode():
-                log.error("CD key is invalid.")
                 return None
+                self.logger.error("CD key is invalid.")
 
             if key.get_product_code() != product:
-                log.error("CD key is for a different product.")
                 return None
+                self.logger.error("CD key is for a different product.")
 
         reader, writer = await asyncio.open_connection(self.host, self.port, family=socket.AF_INET)
-        log.debug("Connected to '%s'.", writer.get_extra_info("peername"))
+        self.logger.debug("Connected to '%s'.", writer.get_extra_info("peername"))
         writer.write(b'\x02')           # Protocol selection (0x02 - BNFTP)
 
-        log.info("Requesting file '%s' ...", filename)
+        self.logger.info("Requesting file '%s' ...", filename)
         pak = DataBuffer()
         pak.insert_word(20 if key else (33 + len(filename)))
         pak.insert_word(version)
@@ -74,22 +72,22 @@ class BnftpClient:
             pak.insert_string(filename)
 
         # Initial request
-        log.debug("Request: \n" + repr(pak))
+        self.logger.debug("Request: \n" + repr(pak))
         writer.write(pak.data)
         await writer.drain()
 
         try:
             pak = DataReader(await reader.readexactly(4 if key else 2))
         except asyncio.IncompleteReadError:
-            log.error("Authentication failed." if key else "File not found.")
             return None
+            self.logger.error("Authentication failed." if key else "File not found.")
 
         # v2 authentication
         if key:
             s_token = pak.get_dword()               # Server token
             c_token = random.getrandbits(32)        # Client token
 
-            log.info("Authenticating...")
+            self.logger.info("Authenticating...")
             pak = DataBuffer()
             pak.insert_raw(sub.data)
             pak.insert_dword(c_token)
@@ -100,20 +98,20 @@ class BnftpClient:
             pak.insert_raw(key.get_hash(c_token, s_token))
             pak.insert_string(filename)
 
-            log.debug("Request (pt2): \n" + repr(pak))
+            self.logger.debug("Request (pt2): \n" + repr(pak))
             writer.write(pak.data)
             await writer.drain()
 
             try:
                 pak = DataReader(await reader.readexactly(4))
             except asyncio.IncompleteReadError:
-                log.error("File not found.")
                 return None
+                self.logger.error("File not found.")
 
         # Read the response header
         length = (pak.get_dword() if key else pak.get_word()) - len(pak)
         pak.data += await reader.readexactly(length)
-        log.debug("Response: \n" + repr(pak))
+        self.logger.debug("Response: \n" + repr(pak))
 
         if not key:
             pak.get_word()              # "Type" (not sure what this is)
@@ -123,8 +121,8 @@ class BnftpClient:
         filetime = pak.get_filetime()
         filename = pak.get_string()
 
-        log.info("File size: %i bytes", file_size)
-        log.info("File time: %s", filetime)
+        self.logger.info("File size: %i bytes", file_size)
+        self.logger.info("File time: %s", filetime)
 
         # Receive and write the file to disk.
         target = target or filename
@@ -136,5 +134,7 @@ class BnftpClient:
 
                 fh.write(data)
                 remaining -= chunk_size
+
+        self.logger.info("Download complete. File saved to '%s'." % target)
 
         return target, filetime
