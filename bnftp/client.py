@@ -39,12 +39,12 @@ class BnftpClient:
             key = KeyDecoder.get(key)
 
             if not key.decode():
-                return None
                 self.logger.error("CD key is invalid.")
+                return None, None
 
             if key.get_product_code() != product:
-                return None
                 self.logger.error("CD key is for a different product.")
+                return None, None
 
         reader, writer = await asyncio.open_connection(self.host, self.port, family=socket.AF_INET)
         self.logger.debug("Connected to '%s'.", writer.get_extra_info("peername"))
@@ -79,8 +79,8 @@ class BnftpClient:
         try:
             pak = DataReader(await reader.readexactly(4 if key else 2))
         except asyncio.IncompleteReadError:
-            return None
             self.logger.error("Authentication failed." if key else "File not found.")
+            return None, None
 
         # v2 authentication
         if key:
@@ -105,8 +105,8 @@ class BnftpClient:
             try:
                 pak = DataReader(await reader.readexactly(4))
             except asyncio.IncompleteReadError:
-                return None
                 self.logger.error("File not found.")
+                return None, None
 
         # Read the response header
         length = (pak.get_dword() if key else pak.get_word()) - len(pak)
