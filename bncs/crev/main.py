@@ -10,7 +10,7 @@ CREV_VERSIONS = {
     r"\w{4}ver([0-7])\.mpq": 1,
     r"ver-\w{4}-([0-7])\.mpq": 2,
     r"lockdown-\w{4}-([0-1])([0-9])\.mpq": 3,
-    r"CheckRevision(D1*)\.mpq": 4
+    r"CheckRevision(D1)*\.mpq": 4
 }
 
 
