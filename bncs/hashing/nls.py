@@ -17,8 +17,8 @@ def b2i(b):
 def i2b(i, length=None):
     """Converts an integer to a byte array.
 
-    - 'length' is the expected length of the array.
-    - If None is given, the integer's smallest size will be used."""
+    length is the expected length of the array. If None is given, the integer's smallest size will be used.
+    """
     length = length or ((i.bit_length() + 7) // 8)
     return i.to_bytes(length, DEFAULT_BYTE_ORDER, signed=False)
 
@@ -83,7 +83,10 @@ def get_modulus(nls_version=2):
 
 
 def get_x(username, password, salt):
-    """SHA1(salt, SHA1(username, ':', password))"""
+    """Calculates the SHA1 hash of the username, password, and salt.
+
+    Equivalent to: SHA1(salt, SHA1(username, ':', password))
+    """
     return b2i(H(salt, H(username.upper(), ':', password.upper())))
 
 
@@ -103,7 +106,7 @@ def get_u(B):
 
 
 def get_K(S):
-    """The password proof."""
+    """Calculates the password proof."""
     S = i2b(S, 32)
 
     K = []
@@ -133,6 +136,8 @@ def calculate_AMK(A, M, K):
 
 
 class NLS_Session:
+    """Base class for NLS operations."""
+
     def __init__(self, username, version=2, private=None):
         self.version = version
         self.username = username.upper()
@@ -170,7 +175,16 @@ class NLS_Session:
 
 
 class NLS_Client(NLS_Session):
+    """Handles client-side NLS operations."""
+
     def __init__(self, username, password, version=2, bytes_a=None):
+        """Creates a new NLS client session.
+
+        username: the client's username
+        password: the client's plain-text password (it will be hashed!)
+        version: the NLS version to use (default 2)
+        bytes_a: a byte array containing the client's private key (default generates a random one)
+        """
         super().__init__(username, version, bytes_a)
 
         self._password = password.upper()
@@ -182,7 +196,11 @@ class NLS_Client(NLS_Session):
     def process_challenge(self, bytes_s, bytes_B):
         """Processes the server challenge and returns the password proof.
 
-        The challenge is sent in SID_AUTH_ACCOUNTLOGON (0x53)"""
+        The challenge is sent in SID_AUTH_ACCOUNTLOGON (0x53) and contains both required values.
+
+        bytes_s: a byte array containing the account's salt value
+        bytes_B: a byte array containing the server's public key
+        """
         self.s = bytes_s
         self.B = b2i(bytes_B)
 
@@ -206,7 +224,10 @@ class NLS_Client(NLS_Session):
     def verify(self, host_AMK):
         """Verifies the server's password proof.
 
-        The server proof is sent in SID_AUTH_ACCOUNTLOGONPROOF (0x54)."""
+        The server proof is sent in SID_AUTH_ACCOUNTLOGONPROOF (0x54).
+
+        host_AMK: a byte array containing the server's password proof
+        """
         self._authenticated = (self.AMK == host_AMK)
 
     def get_client_key(self):
@@ -217,7 +238,18 @@ class NLS_Client(NLS_Session):
 
 
 class NLS_Server(NLS_Session):
+    """Handles server-side NLS operations."""
+
     def __init__(self, username, bytes_s, bytes_v, bytes_A, version=2, bytes_b=None):
+        """Creates a new NLS server session.
+
+        username: the username of the account being logged into
+        bytes_s: a byte array containing the salt value associated with the account
+        bytes_v: a byte array containing the verifier value associated with the account
+        bytes_A: a byte array containing the client's public key
+        version: the NLS version to use (default 2)
+        bytes_b: the server's private key (default generates a random one)
+        """
         super().__init__(username, version, bytes_b)
 
         self.s = bytes_s
@@ -236,15 +268,19 @@ class NLS_Server(NLS_Session):
             self.AMK = calculate_AMK(self.A, self.M, self.K)
 
     def get_challenge(self):
-        """Returns the challenge to be sent to the client.
+        """Returns values for the challenge that should be sent to the client.
 
-        The challenge is sent in SID_AUTH_ACCOUNTLOGON (0x53)"""
+        The challenge is sent in SID_AUTH_ACCOUNTLOGON (0x53).
+        Values: salt, server public key"""
         if self.safety_failed:
             return None, None
         return self.s, i2b(self.B, 32)
 
     def verify(self, client_M):
-        """Verifies the client's password proof and returns the server's response."""
+        """Verifies the client's password proof and returns the server's own proof.
+
+        client_M: a byte array containing the client's password proof value
+        """
         if not self.safety_failed and client_M == self.M:
             self._authenticated = True
             return self.AMK

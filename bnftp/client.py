@@ -18,11 +18,12 @@ class BnftpClient:
     async def download(self, filename, target=None, key=None, **request):
         """ Downloads a file from the BNFTP server and saves it to disk.
 
-            - filename is the name of the file to download.
-            - target is the local path to where the file should be saved
-            - key is an optional CD key to authenticate with
-            - request is named arguments used in the request.
-            - Returns a tuple containing the path where the file was saved and the time returned by the server.
+        filename: name of the file to download.
+        target: local path to where the file should be saved
+        key: optional CD key to authenticate with
+        request: other named arguments used in the request.
+
+        Returns a tuple containing the path where the file was saved and the time returned by the server.
 
             See: https://bnetdocs.org/document/5/file-transfer-protocol-version-1
             and: https://bnetdocs.org/document/6/file-transfer-protocol-version-2

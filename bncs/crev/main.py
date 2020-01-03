@@ -16,6 +16,7 @@ CREV_VERSIONS = {
 
 
 class CheckRevisionFailedException(Exception):
+    """Raised if the version checking operation did not complete."""
     def __init__(self, a):
         super().__init__(a)
 
@@ -46,6 +47,10 @@ class CheckRevisionResults:
 
 
 def get_crev_version(archive):
+    """Returns the version of CheckRevision used by a given MPQ archive.
+
+    archive: the filename given by the server during client authentication
+    """
     for pattern, version in CREV_VERSIONS.items():
         if re.match(pattern, archive):
             return version

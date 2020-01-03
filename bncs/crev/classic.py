@@ -22,6 +22,7 @@ def pad_desc(data):
 
 
 def get_hashcode(mpq):
+    """Returns the hash code (seed value?) for the specified MPQ filename."""
     num = 0
     if mpq.startswith("ver"):
         num = ord(mpq[9]) - 0x30
@@ -31,6 +32,14 @@ def get_hashcode(mpq):
 
 
 def check_version(formula, mpq, files):
+    """Performs a fast variant of the classic version check for standard formulas.
+
+    For unusual formulas, this function will delegate to the slow method (not yet implemented).
+
+    formula: the formula string used to calculate the checksum
+    mpq: the name of the MPQ file variant used to seed the check
+    files: a list of files that should be included in the check
+    """
     # Read data from EXE PE structure
     pe = pefile.PE(files[0])
 

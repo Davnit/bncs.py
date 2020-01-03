@@ -8,6 +8,12 @@ from signify.signed_pe import SignedPEFile
 
 
 def check_version(seed, exe, include_cert=False):
+    """Performs the modern 'simple' version check using the exe version and optionally the certificate.
+
+    seed: base64 encoded seed value provided by the server
+    exe: path to the main game exe file
+    include_cert: set to True to include the exe certificate in the hash
+    """
     pe = pefile.PE(exe)
     ver_str = pe.FileInfo[0][0].StringTable[0].entries.get(b'FileVersion').decode('ascii')
 
