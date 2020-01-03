@@ -72,6 +72,8 @@ def check_version(archive, formula, files=None, platform='IX86', timestamp=None)
         just emulate the code that they would've executed.
     """
     files = files or []
+    if platform != 'IX86':
+        raise CheckRevisionFailedException("Unsupported platform: %s" % platform)
 
     check_ver = get_crev_version(archive)
     if check_ver in [1, 2]:
