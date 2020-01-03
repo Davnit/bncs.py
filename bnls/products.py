@@ -16,31 +16,27 @@ PRODUCT_WAR3DEMO = 0x0C
 
 # Maps BNLS product codes to BNCS ID's
 PRODUCT_CODES = {
-    PRODUCT_STARCRAFT: "STAR",
-    PRODUCT_BROODWAR: "SEXP",
-    PRODUCT_WARCRAFT2: "W2BN",
-    PRODUCT_DIABLO2: "D2DV",
-    PRODUCT_D2LOD: "D2XP",
-    PRODUCT_STARCRAFTJAPAN: "JSTR",
-    PRODUCT_WARCRAFT3: "WAR3",
-    PRODUCT_WAR3TFT: "W3XP",
-    PRODUCT_DIABLO: "DRTL",
-    PRODUCT_DIABLOSHAREWARE: "DSHR",
-    PRODUCT_SCSHAREWARE: "SSHR",
-    PRODUCT_WAR3DEMO: "W3DM"
+    "STAR": PRODUCT_STARCRAFT,
+    "SEXP": PRODUCT_BROODWAR,
+    "W2BN": PRODUCT_WARCRAFT2,
+    "D2DV": PRODUCT_DIABLO2,
+    "D2XP": PRODUCT_D2LOD,
+    "JSTR": PRODUCT_STARCRAFTJAPAN,
+    "WAR3": PRODUCT_WARCRAFT3,
+    "W3XP": PRODUCT_WAR3TFT,
+    "DRTL": PRODUCT_DIABLO,
+    "DSHR": PRODUCT_DIABLOSHAREWARE,
+    "SSHR": PRODUCT_SCSHAREWARE,
+    "W3DM": PRODUCT_WAR3DEMO
 }
-
-
-def get_bnls_code(product):
-    product = {value: key for key, value in PRODUCT_CODES.items()}.get(product, product)
-    if not isinstance(product, int):
-        raise ValueError("Unrecognized product code: %s" % product)
-    return product
 
 
 class BnlsProduct:
     def __init__(self, code):
-        self.id = get_bnls_code(code)
-        self.code = PRODUCT_CODES.get(self.id)
-        self.version = None
+        self.code = code.upper()
+        self.bnls_id = PRODUCT_CODES.get(self.code)
+        self.check = None           # bncs.crev.CheckRevisionResults object
         self.verbyte = None
+
+    def __str__(self):
+        return "BNLS Product '%s'" % self.code

@@ -1,5 +1,5 @@
 
-from .main import CheckRevisionFailedException
+from .main import CheckRevisionFailedException, CheckRevisionResults
 from .main import get_crev_version, check_version
 
 from .classic import check_version as crev_classic

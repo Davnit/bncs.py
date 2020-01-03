@@ -4,105 +4,128 @@ from binascii import crc32
 from datetime import datetime
 import logging
 import socket
-import threading
 
 from .packets import *
-from .products import *
+from .products import BnlsProduct, PRODUCT_CODES
 
-
-log = logging.getLogger(__name__)
+from bncs.crev import CheckRevisionResults
 
 
 class BnlsClient:
+    """Client for interacting with a BNLS server."""
     def __init__(self):
-        self.cookies = []
-        self.connected = False
-        self.host = None
-        self.products = {}
-        self.received = []
-        self.socket = None
+        self.endpoint = None
+        self.products = {code: BnlsProduct(code) for code in PRODUCT_CODES}
+        self.logger = logging.getLogger("BNLS")
 
-        self.thread = None
+        self._connected = False
+        self._reader = None
+        self._writer = None
         self._external_ip = None
-        self._lock = threading.Lock()
         self._version_requests = []
+        self._received = []
+        self._cookies = []
+        self._reading = False
 
-    def connect(self, host, port=9367):
-        self.host = host
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # Must be IPv4
-        self.socket.connect((host, port))
-        self.connected = True
+    @property
+    def external_ip(self):
+        """Client's external IP address.
 
-        self.cookies.clear()
-        self.received.clear()
+        This field is only set after authorization with the BNLS server.
+        """
+        return self._external_ip
+
+    @property
+    def connected(self):
+        return self._connected
+
+    async def connect(self, host, port=9367):
+        """Connects to the BNLS server.
+
+        host: IP address (IPv4 only) or hostname of the remote server
+        port: port number that the BNLS server is running on (default 9367)
+        """
+        self.endpoint = (host, port)
+        self._reader, self._writer = await asyncio.open_connection(host, port, family=socket.AF_INET)
+        self._connected = True
+
+        self._cookies.clear()
+        self._received.clear()
         self._version_requests.clear()
 
-        self.thread = threading.Thread(target=self._run)
-        self.thread.setDaemon(True)
-        self.thread.start()
+    async def disconnect(self):
+        """Disconnects from the BNLS server."""
+        if self._writer:
+            self._writer.close()
+            await self._writer.wait_closed()
+        self._connected = False
 
-    def close(self):
-        self.socket.close()
-        self.connected = False
+    async def send_packet(self, pak):
+        """Sends a BNLS packet.
 
-    def send_packet(self, pak):
-        self.socket.sendall(pak.get_data())
-        log.debug("Sent BNLS packet 0x%0.2X (length: %i)", pak.id, len(pak))
-
-    def _run(self):
-        # Packet receive loop
-        while self.connected:
-            # Receive the header
-            data = self.socket.recv(3)
-            if len(data) < 3:
-                self.connected = False
-                log.error("Disconnected from the server.")
-                break
-
-            # Build the packet
-            pak = BnlsReader(data)
-            log.debug("Received BNLS packet 0x%0.2X (length: %i)", pak.id, len(pak))
-
-            # Receive the rest of the data
-            pak.append(self.socket.recv(len(pak) - 3))
-
-            if not pak.is_full_packet():
-                self.connected = False
-                log.error("Disconnected from the server (mid-packet).")
-                break
-
-            with self._lock:
-                self.received.append(pak)
+        pak: the BnlsPacket object containing the data to be sent
+        """
+        self._writer.write(pak.get_data())
+        await self._writer.drain()
+        self.logger.debug("Sent BNLS packet 0x%0.2X (length: %i)", pak.id, len(pak))
 
     def _get_cookie(self):
+        """Returns the next available cookie value.."""
         cookie = 1
-        with self._lock:
-            while cookie in self.cookies:
-                cookie += 1
-            self.cookies.append(cookie)
+        while cookie in self._cookies:
+            cookie += 1
+        self._cookies.append(cookie)
         return cookie
 
     def _release_cookie(self, cookie):
-        with self._lock:
-            self.cookies.remove(cookie)
+        """Marks a cookie value as available."""
+        self._cookies.remove(cookie)
 
-    async def get_packet(self, pid, match=None):
-        while True:
-            with self._lock:
-                for pak in self.received:
-                    if pak.id == pid and (not match or match(pak)):
-                        self.received.remove(pak)
+    async def wait_for_packet(self, pid, match=None):
+        """Waits until a specific packet is received and then returns it.
+
+        pid: the packet ID for the expected packet
+        match: a function taking a packet reader object as an argument and returns True if the packet matches
+        """
+        try:
+            while self.connected:
+                # Check if we've already received the packet we want
+                for pak in self._received:
+                    if pak.id == pid and (match is None or match(pak)):
+                        self._received.remove(pak)
                         return pak
 
-            # Wait for some new packets
-            await asyncio.sleep(0.1)
+                if not self._reading:
+                    self._reading = True        # Sets a flag so that only one thread will try to read at a time.
+
+                    # Nothing found - read the next packet
+                    pak = BnlsReader(await self._reader.readexactly(3))
+                    self.logger.debug("Received BNLS packet 0x%0.2X (length: %i)", pak.id, len(pak))
+                    pak.append(await self._reader.readexactly(len(pak) - 3))
+
+                    self._reading = False
+
+                    # Add the packet to the receive buffer
+                    self._received.append(pak)
+                else:
+                    # If we can't yield to receive data, just sleep.
+                    await asyncio.sleep(0.01)
+
+        except asyncio.IncompleteReadError:
+            self._connected = False
+            self._reading = False
+            self.logger.error("The BNLS server closed the connection.")
 
     async def authorize(self, bot_id, password):
         """ Logs in to the BNLS server.
 
+        bot_id: your bot's identifier for the BNLS system (this is not the same as your Battle.net username!)
+        password: your bot's password for the BNLS system (this is not the same as your Battle.net password!)
+
+        Returns True if authorized, False if unauthorized.
+
             - This is not required on all servers, and is usually only used for stats tracking.
             - If this is used, it must be sent first before any other requests.
-            - Returns TRUE if authorized, FALSE if unauthorized, NONE if failed.
             - If unauthorized, you may still continue (logged in anonymously)
 
             Uses the following packets:
@@ -111,51 +134,49 @@ class BnlsClient:
                 - https://bnetdocs.org/packet/185/bnls-authorizeproof
                 - https://bnetdocs.org/packet/196/bnls-authorizeproof
         """
+        # Send the initial authorization request
         pak = BnlsPacket(BNLS_AUTHORIZE)
         pak.insert_string(bot_id)
-        self.send_packet(pak)
+        await self.send_packet(pak)
 
-        try:
-            pak = await asyncio.wait_for(self.get_packet(BNLS_AUTHORIZE), timeout=1)
-        except asyncio.TimeoutError:
-            log.warning("BNLS authentication timed out.")
+        # Receive response and calculate the BNLS checksum (https://bnetdocs.org/document/23/bnls-checksum-algorithm)
+        pak = await self.wait_for_packet(BNLS_AUTHORIZE)
+        if pak is None:
             return None
-
-        # Calculate the BNLS checksum (https://bnetdocs.org/document/23/bnls-checksum-algorithm)
         code = pak.get_dword()
         checksum = crc32((password + code.hex().upper()).encode('ascii'))
 
+        # Send the challenge response
         pak = BnlsPacket(BNLS_AUTHORIZEPROOF)
         pak.insert_dword(checksum)
-        self.send_packet(pak)
+        await self.send_packet(pak)
 
-        try:
-            pak = await asyncio.wait_for(self.get_packet(BNLS_AUTHORIZEPROOF), timeout=1)
-        except asyncio.TimeoutError:
-            log.error("BNLS authentication failed.")
+        # Receive authorization status
+        pak = await self.wait_for_packet(BNLS_AUTHORIZEPROOF)
+        if pak is None:
             return None
-
         status = pak.get_dword()
         self._external_ip = pak.get_ipv4()
         return status == 0
 
-    async def request_version_byte(self, product, timeout=1):
+    async def request_version_byte(self, product_code):
         """ Requests the version byte for a product.
 
-            - Product can be either the BNLS ID or 4-character product code (ex: SEXP)
-            - Returns NONE if the product is not supported or the server did not respond in a timely fashion.
+        product_code: the 4-character product code (ex: SEXP)
+
+        Returns the version byte of the requested product.
 
             Uses the following packets:
                 - https://bnetdocs.org/packet/181/bnls-requestversionbyte
                 - https://bnetdocs.org/packet/134/bnls-requestversionbyte
         """
-        product = get_bnls_code(product)
-        self._version_requests.append(product)
+        product = self.products.get(product_code.upper())
+        self._version_requests.append(product.code)
 
         # Make the request.
         pak = BnlsPacket(BNLS_REQUESTVERSIONBYTE)
-        pak.insert_dword(product)
-        self.send_packet(pak)
+        pak.insert_dword(product.bnls_id)
+        await self.send_packet(pak)
 
         # BNLS returns a 0 for the product on failure, so there's no way to match that response to the request
         #   if there are multiple requests pending.
@@ -164,42 +185,43 @@ class BnlsClient:
             return (prod == 0 and len(self._version_requests) == 1) or (prod == product)
 
         # Wait for a response with this product.
-        try:
-            pak = await asyncio.wait_for(
-                self.get_packet(BNLS_REQUESTVERSIONBYTE, find_verbyte_response), timeout)
-        except asyncio.TimeoutError:
-            log.warning("Version byte request for '%s' timed out.", PRODUCT_CODES.get(product, product))
+        pak = await self.wait_for_packet(BNLS_REQUESTVERSIONBYTE, find_verbyte_response)
+        if pak is None:
             return None
-
-        self._version_requests.remove(product)
+        self._version_requests.remove(product.code)
         if pak.get_dword() == 0:
             return False     # Explicit failure response
         else:
-            return pak.get_dword()
+            product.verbyte = pak.get_dword()
+            return product.verbyte
 
-    async def check_version(self, product, timestamp, archive, formula, flags=0, timeout=5):
+    async def check_version(self, product_code, timestamp, archive, formula, flags=0):
         """ Requests a version check for a product.
 
-            - product can be either the BNLS ID or 4-character product code (ex: SEXP)
-            - timestamp, archive, and formula are values provided by the BNCS server
-            - no flags are currently defined in the protocol
+        product_code: the 4-character product code (ex: SEXP)
+        timestamp: the filetime of the version check archive, as provided by the server
+        archive: the filename of the version check archive
+        formula: the checksum formula/value string
+        flags: value sent to the server, none are currently defined (default 0)
+
+        Returns a BnlsProduct object containing the returned values.
 
             Uses the following packets:
                 - https://bnetdocs.org/packet/260/bnls-versioncheckex2
                 - https://bnetdocs.org/packet/125/bnls-versioncheckex2
         """
-        product = get_bnls_code(product)
+        product = self.products.get(product_code.upper())
         cookie = self._get_cookie()
 
         # Send the request
         pak = BnlsPacket(BNLS_VERSIONCHECKEX2)
-        pak.insert_dword(product)
+        pak.insert_dword(product.bnls_id)
         pak.insert_dword(flags)
         pak.insert_dword(cookie)
         pak.insert_filetime(timestamp) if isinstance(timestamp, datetime) else pak.insert_long(timestamp)
         pak.insert_string(archive)
         pak.insert_string(formula)
-        self.send_packet(pak)
+        await self.send_packet(pak)
 
         # Function to extract and match the cookie from a response packet.
         def find_crev_response(p):
@@ -217,21 +239,92 @@ class BnlsClient:
             p.position = start_pos
             return match
 
-        try:
-            pak = await asyncio.wait_for(
-                self.get_packet(BNLS_VERSIONCHECKEX2, find_crev_response), timeout)
-        except asyncio.TimeoutError:
-            log.warning("Version check request for '%s' timed out.", PRODUCT_CODES.get(product, product))
+        # Receive the response and fill out the product object
+        pak = await self.wait_for_packet(BNLS_VERSIONCHECKEX2, find_crev_response)
+        self._release_cookie(cookie)
+        if pak and pak.get_dword() == 1:
+            results = CheckRevisionResults(product.code)
+            results.version = pak.get_dword()
+            results.checksum = pak.get_dword()
+            results.info = pak.get_string()
+            pak.get_dword()
+
+            product.verbyte = pak.get_dword()
+            product.check = results
+            return product
+        else:
+            # Server returned failure code or didn't return at all
             return None
 
-        if pak.get_dword() == 1:
-            version = pak.get_dword()
-            checksum = pak.get_dword()
-            info = pak.get_string()
-            self._release_cookie(pak.get_dword())
-            vcode = pak.get_dword()
+    async def hash_data(self, data, flags=4, **kwargs):
+        """Requests the Broken-SHA1 (XSha) hash of some data.
 
-            return version, checksum, info, vcode
-        else:
-            self._release_cookie(pak.get_dword())
-            return False
+        data: a byte array containing the data to be hashed
+        flags: sent to the server to control the type of hash (default 4: cookie hash)
+
+        keyword arguments:
+         - 'client_key': value used with flag 2 (required if flag is set)
+         - 'server_key': value used with flag 2 (required if flag is set)
+         - 'cookie': value used with flag 4 (one will be generated if not set)
+
+        Returns the 20-byte hash of the data.
+
+            Uses the following packets:
+                - https://bnetdocs.org/packet/293/bnls-hashdata
+                - https://bnetdocs.org/packet/383/bnls-hashdata
+        """
+        pak = BnlsPacket(BNLS_HASHDATA)
+        pak.insert_dword(len(data))
+        pak.insert_raw(data)
+
+        cookie = None
+
+        if flags & 2 == 2:
+            # Double hash (for OLS passwords - this should never be used in practice for security reasons)
+            pak.insert_dword(kwargs["client_key"])
+            pak.insert_dword(kwargs["server_key"])
+
+        if flags & 4 == 4:
+            cookie = kwargs.get("cookie", self._get_cookie())
+            pak.insert_dword(cookie)
+
+        await self.send_packet(pak)
+
+        # Function to match the response packet
+        def find_hash_data_response(p):
+            if cookie is None:
+                return True
+
+            p.position += 20
+            match = p.get_dword(peek=True) == cookie
+            p.position -= 20
+            return match
+
+        # Receive the response
+        pak = await self.wait_for_packet(BNLS_HASHDATA, find_hash_data_response)
+        return pak.get_raw(20) if pak else None
+
+    async def verify_server(self, server_ip, signature):
+        """Verifies a WarCraft 3 server signature.
+
+        server_ip: the packed int version of the server's IP address, or a str of the same in dot-notation (IPv4 only!)
+        signature: the 128-byte signature provided by the server
+
+        Returns True if the signature is valid, or False if otherwise.
+
+            Uses the following packets:
+                - https://bnetdocs.org/packet/251/bnls-verifyserver
+                - https://bnetdocs.org/packet/238/bnls-verifyserver
+        """
+        if isinstance(server_ip, str):
+            server_ip = int(socket.inet_aton(server_ip).decode('hex'), 16)
+
+        # Send the request
+        pak = BnlsPacket(BNLS_VERIFYSERVER)
+        pak.insert_dword(server_ip)
+        pak.insert_raw(signature)
+        await self.send_packet(pak)
+
+        # Receive the response
+        pak = await self.wait_for_packet(BNLS_VERIFYSERVER)
+        return pak.get_dword() == 1 if pak else None
