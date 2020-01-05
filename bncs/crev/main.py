@@ -17,8 +17,7 @@ CREV_VERSIONS = {
 
 class CheckRevisionFailedException(Exception):
     """Raised if the version checking operation did not complete."""
-    def __init__(self, a):
-        super().__init__(a)
+    pass
 
 
 class CheckRevisionResults:
