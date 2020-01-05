@@ -130,7 +130,7 @@ class DataBuffer:
 
     def insert_ipv4(self, ipv4):
         """ Inserts an IPv4 address as a 4-byte DWORD. """
-        self.insert_dword(inet_aton(ipv4))
+        self.insert_raw(inet_aton(ipv4))
 
     def insert_filetime(self, dt):
         """ Inserts a python datetime object to the end of the buffer as a 64-bit FILETIME. """
@@ -149,7 +149,7 @@ class DataBuffer:
 
 
 class DataReader:
-    def __init__(self, data):
+    def __init__(self, data=b''):
         if not isinstance(data, (bytes, bytearray)):
             raise TypeError("Unsupported data reader initialization type: %s" % type(data).__name__)
         self.data = data

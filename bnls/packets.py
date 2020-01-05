@@ -1,5 +1,5 @@
 
-from bncs.buffer import DataBuffer, DataReader
+from bncs.utils import PacketBuilder, PacketReader, DataBuffer
 
 
 # Standard BNLS packet constants
@@ -33,48 +33,35 @@ BNLS_WARDEN = 0x7D
 BNLS_IPBAN = 0xFF
 
 
-class BnlsPacket(DataBuffer):
+class BnlsPacket(PacketBuilder):
     def __init__(self, packet_id):
-        self.id = packet_id
-        super().__init__()
+        super().__init__(packet_id)
 
     def __len__(self):
         return super().__len__() + 3
 
     def __str__(self):
-        return "BNLS Packet 0x%0.2X (length: %i)" % (self.id, len(self))
+        return "BNLS " + super().__str__()
 
     def get_data(self):
         pak = DataBuffer()
         pak.insert_word(self.__len__())
-        pak.insert_byte(self.id)
+        pak.insert_byte(self.packet_id)
         pak.insert_raw(self.data)
         return pak.data
 
 
-class BnlsReader(DataReader):
+class BnlsReader(PacketReader):
     def __init__(self, data):
         if len(data) < 3:
             raise ValueError("Packet data must contain at least 3 bytes.")
 
         super().__init__(data)
         self.length = self.get_word()
-        self.id = self.get_byte()
+        self.packet_id = self.get_byte()
 
     def __len__(self):
         return self.length
 
     def __str__(self):
-        return "BNLS Packet 0x%0.2X (length: %i)" % (self.id, self.length)
-
-    @property
-    def actual_length(self):
-        return super().__len__()
-
-    def append(self, data):
-        if self.actual_length + len(data) > self.length:
-            raise ValueError("Message length exceeded.")
-        self.data += data
-
-    def is_full_packet(self):
-        return self.length == self.actual_length
+        return "BNLS " + super().__str__()

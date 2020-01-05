@@ -1,8 +1,7 @@
 
 from . import crev
 from . import hashing
-
-from .buffer import DataBuffer, DataReader, format_buffer
+from . import utils
 
 from .chat import *
 from .packets import *

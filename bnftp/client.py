@@ -1,6 +1,6 @@
 
-from bncs.buffer import DataBuffer, DataReader
-from bncs.hashing.cdkeys import KeyDecoder
+from bncs.utils import DataBuffer, DataReader
+from bncs.hashing import KeyDecoder
 
 import asyncio
 from datetime import datetime
