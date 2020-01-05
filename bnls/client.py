@@ -55,10 +55,13 @@ class BnlsClient:
 
     async def disconnect(self):
         """Disconnects from the BNLS server."""
+        self._connected = False
         if self._writer:
             self._writer.close()
             await self._writer.wait_closed()
-        self._connected = False
+            self._writer = None
+            self._reader = None
+            self.logger.info("Connection closed.")
 
     async def send_packet(self, pak):
         """Sends a BNLS packet.
@@ -112,9 +115,13 @@ class BnlsClient:
                     await asyncio.sleep(0.01)
 
         except asyncio.IncompleteReadError:
-            self._connected = False
+            if self._connected:
+                self.logger.error("The BNLS server closed the connection.")
+                self._connected = False
+
             self._reading = False
-            self.logger.error("The BNLS server closed the connection.")
+            self._writer = None
+            self._reader = None
 
     async def authorize(self, bot_id, password):
         """ Logs in to the BNLS server.
