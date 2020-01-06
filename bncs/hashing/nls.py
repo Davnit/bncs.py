@@ -135,7 +135,7 @@ def calculate_AMK(A, M, K):
     return H(i2b(A, 32), M, K)
 
 
-class NLS_Session:
+class NLSSession:
     """Base class for NLS operations."""
 
     def __init__(self, username, version=2, private=None):
@@ -174,7 +174,7 @@ class NLS_Session:
         return self.K if self._authenticated else None
 
 
-class NLS_Client(NLS_Session):
+class NLSClient(NLSSession):
     """Handles client-side NLS operations."""
 
     def __init__(self, username, password, version=2, bytes_a=None):
@@ -237,7 +237,7 @@ class NLS_Client(NLS_Session):
         return i2b(self.A, 32)
 
 
-class NLS_Server(NLS_Session):
+class NLSServer(NLSSession):
     """Handles server-side NLS operations."""
 
     def __init__(self, username, bytes_s, bytes_v, bytes_A, version=2, bytes_b=None):

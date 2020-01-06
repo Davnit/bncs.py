@@ -2,7 +2,7 @@
 from .cdkeys import KeyDecoder, SCKeyDecoder, D2KeyDecoder, W3KeyDecoder
 
 from .nls import get_sv as get_verifier
-from .nls import NLS_Client, NLS_Server
+from .nls import NLSClient, NLSServer
 
 from .sigverify import decode_signature, check_signature
 
