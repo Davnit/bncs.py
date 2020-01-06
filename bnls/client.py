@@ -70,7 +70,7 @@ class BnlsClient:
         """
         self._writer.write(pak.get_data())
         await self._writer.drain()
-        self.logger.debug("Sent BNLS packet 0x%0.2X (length: %i)", pak.id, len(pak))
+        self.logger.debug("Sent BNLS packet 0x%0.2X (length: %i)", pak.packet_id, len(pak))
 
     def _get_cookie(self):
         """Returns the next available cookie value.."""
@@ -94,7 +94,7 @@ class BnlsClient:
             while self.connected:
                 # Check if we've already received the packet we want
                 for pak in self._received:
-                    if pak.id == pid and (match is None or match(pak)):
+                    if pak.packet_id == pid and (match is None or match(pak)):
                         self._received.remove(pak)
                         return pak
 
@@ -103,7 +103,7 @@ class BnlsClient:
 
                     # Nothing found - read the next packet
                     pak = BnlsReader(await self._reader.readexactly(3))
-                    self.logger.debug("Received BNLS packet 0x%0.2X (length: %i)", pak.id, len(pak))
+                    self.logger.debug("Received BNLS packet 0x%0.2X (length: %i)", pak.packet_id, len(pak))
                     pak.append(await self._reader.readexactly(len(pak) - 3))
 
                     self._reading = False
