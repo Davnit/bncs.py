@@ -1,4 +1,6 @@
 
+import enum
+
 # Event ID constants (EID)
 EID_SHOWUSER = 0x01
 EID_JOIN = 0x02
@@ -20,7 +22,7 @@ EID_EMOTE = 0x17
 
 # Channel flags
 CHANNEL_PUBLIC = 0x01
-CHANNEL_MODERATORED = 0x02
+CHANNEL_MODERATED = 0x02
 CHANNEL_RESTRICTED = 0x04
 CHANNEL_SILENT = 0x08
 CHANNEL_SYSTEM = 0x10
@@ -38,3 +40,46 @@ FLAG_BNETADMIN = 0x08
 FLAG_NOUDP = 0x10
 FLAG_SQUELCH = 0x20
 FLAG_GUEST = 0x40
+
+
+class ChatEventType(enum.IntEnum):
+    ShowUser = EID_SHOWUSER
+    UserJoin = EID_JOIN
+    UserLeave = EID_LEAVE
+    UserWhisper = EID_WHISPER
+    UserTalk = EID_TALK
+    ServerBroadcast = EID_BROADCAST
+    JoinChannel = EID_CHANNEL
+    FlagUpdate = EID_USERFLAGS
+    WhisperSent = EID_WHISPERSENT
+    ErrorChannelFull = EID_CHANNELFULL
+    ErrorChannelDoesNotExist = EID_CHANNELDOESNOTEXIST
+    ErrorChannelRestricted = EID_CHANNELRESTRICTED
+    ServerInfo = EID_INFO
+    ServerError = EID_ERROR
+    UserIgnored = EID_IGNORE
+    UserUnignored = EID_ACCEPT
+    UserEmote = EID_EMOTE
+
+
+class ChannelFlags(enum.IntFlag):
+    Public = CHANNEL_PUBLIC
+    Moderated = CHANNEL_MODERATED
+    Restricted = CHANNEL_RESTRICTED
+    Silent = CHANNEL_SILENT
+    System = CHANNEL_SYSTEM
+    ProductSpecific = CHANNEL_PRODUCT
+    Global = CHANNEL_GLOBAL
+    Redirect = CHANNEL_REDIRECT
+    Chat = CHANNEL_CHAT
+    TechSupport = CHANNEL_SUPPORT
+
+
+class UserFlags(enum.IntFlag):
+    Blizzard = FLAG_BLIZZARD
+    ChannelOperator = FLAG_CHANOP
+    ChannelSpeaker = FLAG_CHANVOICE
+    ServerAdmin = FLAG_BNETADMIN
+    UdpPlug = FLAG_NOUDP
+    Squelched = FLAG_SQUELCH
+    Guest = FLAG_GUEST
