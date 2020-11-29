@@ -1,5 +1,5 @@
 
-from bncs.utils import PacketBuilder, PacketReader, DataBuffer
+from bncs.utils import PacketBuilder, PacketReader, DataBuffer, get_packet_name
 
 
 # Standard BNLS packet constants
@@ -43,6 +43,9 @@ class BnlsPacket(PacketBuilder):
     def __str__(self):
         return "BNLS " + super().__str__()
 
+    def get_name(self):
+        return get_packet_name(self, globals(), "BNLS_")
+
     def get_data(self):
         pak = DataBuffer()
         pak.insert_word(self.__len__())
@@ -65,6 +68,9 @@ class BnlsReader(PacketReader):
 
     def __str__(self):
         return "BNLS " + super().__str__()
+
+    def get_name(self):
+        return get_packet_name(self, globals(), "BNLS_")
 
     @classmethod
     async def read_from(cls, reader):

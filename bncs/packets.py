@@ -1,5 +1,5 @@
 
-from bncs.utils import PacketBuilder, PacketReader, DataBuffer
+from bncs.utils import PacketBuilder, PacketReader, DataBuffer, get_packet_name
 
 
 # Packet constants
@@ -126,6 +126,9 @@ class BncsPacket(PacketBuilder):
     def __str__(self):
         return "BNCS " + super().__str__()
 
+    def get_name(self):
+        return get_packet_name(self, globals(), "SID_")
+
     def get_data(self):
         buff = DataBuffer()
         buff.insert_byte(0xFF)
@@ -152,6 +155,9 @@ class BncsReader(PacketReader):
 
     def __str__(self):
         return "BNCS " + super().__str__()
+
+    def get_name(self):
+        return get_packet_name(self, globals(), "SID_")
 
     @classmethod
     async def read_from(cls, reader):

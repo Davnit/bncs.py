@@ -2,6 +2,13 @@
 from .buffer import DataBuffer, DataReader, format_buffer
 
 
+def get_packet_name(packet, names, prefix=None):
+    for var, value in names.items():
+        if prefix is None or var.startswith(prefix):
+            if value == packet.packet_id:
+                return var
+
+
 class PacketBuilder(DataBuffer):
     """Helper class for creating and writing packets."""
     def __init__(self, packet_id):
@@ -14,10 +21,16 @@ class PacketBuilder(DataBuffer):
         return super().__len__()
 
     def __str__(self):
+        if str_id := self.get_name():
+            return "Packet %s (id: 0x%0.2X, length: %i)" % (str_id, self.packet_id, len(self))
         return "Packet 0x%0.2X (length: %i)" % (self.packet_id, len(self))
 
     def __repr__(self):
-        return format_buffer(self.get_data())
+        return self.__str__() + ':\n' + format_buffer(self.get_data())
+
+    def get_name(self):
+        """Returns the name of the packet."""
+        pass
 
     def get_data(self):
         """Returns the full packet data including the header."""
@@ -38,9 +51,18 @@ class PacketReader(DataReader):
 
     def __str__(self):
         if self.packet_id:
-            return "Packet 0x%0.2X (length: %i)" % (self.packet_id, self.length)
+            if str_id := self.get_name():
+                return "Packet %s (id: 0x%0.2X, length: %i)" % (str_id, self.packet_id, len(self))
+            return "Packet 0x%0.2X (length: %i)" % (self.packet_id, len(self))
         else:
             return "Unidentified packet (length: %i)" % self.length
+
+    def __repr__(self):
+        return self.__str__() + ':\n' + format_buffer(self.data)
+
+    def get_name(self):
+        """Returns the name of the packet."""
+        pass
 
     @property
     def data_len(self):
