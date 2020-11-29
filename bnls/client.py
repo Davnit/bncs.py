@@ -12,65 +12,102 @@ from bncs.crev import CheckRevisionResults
 
 
 class BnlsClient:
-    """Client for interacting with a BNLS server."""
-    def __init__(self):
-        self.endpoint = None
-        self.products = {code: BnlsProduct(code) for code in PRODUCT_CODES}
-        self.logger = logging.getLogger("BNLS")
+    def __init__(self, *, loop=None, **config):
+        self.loop = loop or asyncio.get_running_loop()
 
-        self._connected = False
-        self._reader = None
-        self._writer = None
+        self.config = {
+            "server": "jbls.davnit.net",
+            "port": 9367,
+            "debug_packets": False
+        }
+        self.config.update(config)
+
+        self.log = logging.getLogger("BNLS")
+
+        self.reader, self.writer = None, None
+
+        self.products = {code: BnlsProduct(code) for code in PRODUCT_CODES}
+
+        self._waiters = []
         self._external_ip = None
         self._version_requests = []
-        self._received = []
         self._cookies = []
-        self._reading = False
 
-    @property
-    def external_ip(self):
-        """Client's external IP address.
-
-        This field is only set after authorization with the BNLS server.
-        """
-        return self._external_ip
+        self._connected = False
+        self._disconnected_fut = None
 
     @property
     def connected(self):
         return self._connected
 
-    async def connect(self, host, port=9367):
-        """Connects to the BNLS server.
+    def disconnect(self, msg=None):
+        msg = msg or "Client disconnected"
 
-        host: IP address (IPv4 only) or hostname of the remote server
-        port: port number that the BNLS server is running on (default 9367)
-        """
-        self.endpoint = (host, port)
-        self._reader, self._writer = await asyncio.open_connection(host, port, family=socket.AF_INET)
+        if self.connected:
+            self._connected = False
+
+            self.writer.close()
+            self.log.info(f"Disconnected: {msg}")
+
+        if not self._disconnected_fut.done():
+            self._disconnected_fut.set_result(True)
+
+        # Cancel any outstanding waiters
+        for (pid, matcher, fut) in self._waiters:
+            if not fut.done():
+                fut.cancel()
+
+    async def wait_for_disconnect(self):
+        await self.writer.wait_closed()
+
+    async def send(self, packet):
+        if not self.connected:
+            self.log.debug("Send() failed due to not connected")
+            return False
+
+        self.writer.write(packet.get_data())
+
+        self.log.debug(f"Sent BNLS packet 0x{packet.packet_id:02X} ({packet.length} bytes)")
+        if self.config["debug_packets"]:
+            self.log.debug(repr(packet))
+
+        await self.writer.drain()
+        return True
+
+    async def send_and_wait(self, packet, matcher=None):
+        if self.connected:
+            fut = self.loop.create_future()
+            self._waiters.append((packet.packet_id, matcher, fut))
+
+            if await self.send(packet):
+                return await fut
+
+    async def receive(self):
+        while self.connected:
+            packet = await BnlsReader.read_from(self.reader)
+            if packet is None:
+                return self.disconnect("Server closed the connection")
+
+            self.log.debug(f"Received BNLS packet 0x{packet.packet_id:02X} ({packet.length} bytes)")
+            if self.config["debug_packets"]:
+                self.log.debug(repr(packet))
+
+            for (pid, matcher, fut) in self._waiters:
+                if pid == packet.packet_id:
+                    if matcher is None or matcher(packet):
+                        fut.set_result(packet)
+                        self._waiters.remove((pid, matcher, fut))
+                        break
+
+    async def connect(self):
+        self.reader, self.writer = \
+            await asyncio.open_connection(self.config["server"], self.config["port"], family=socket.AF_INET)
+
         self._connected = True
+        self._waiters = []
 
-        self._cookies.clear()
-        self._received.clear()
-        self._version_requests.clear()
-
-    async def disconnect(self):
-        """Disconnects from the BNLS server."""
-        self._connected = False
-        if self._writer:
-            self._writer.close()
-            await self._writer.wait_closed()
-            self._writer = None
-            self._reader = None
-            self.logger.info("Connection closed.")
-
-    async def send_packet(self, pak):
-        """Sends a BNLS packet.
-
-        pak: the BnlsPacket object containing the data to be sent
-        """
-        self._writer.write(pak.get_data())
-        await self._writer.drain()
-        self.logger.debug("Sent BNLS packet 0x%0.2X (length: %i)", pak.packet_id, len(pak))
+        self._disconnected_fut = self.loop.create_future()
+        self.loop.create_task(self.receive(), name="BNLS packet receiver")
 
     def _get_cookie(self):
         """Returns the next available cookie value.."""
@@ -83,45 +120,6 @@ class BnlsClient:
     def _release_cookie(self, cookie):
         """Marks a cookie value as available."""
         self._cookies.remove(cookie)
-
-    async def wait_for_packet(self, pid, match=None):
-        """Waits until a specific packet is received and then returns it.
-
-        pid: the packet ID for the expected packet
-        match: a function taking a packet reader object as an argument and returns True if the packet matches
-        """
-        try:
-            while self.connected:
-                # Check if we've already received the packet we want
-                for pak in self._received:
-                    if pak.packet_id == pid and (match is None or match(pak)):
-                        self._received.remove(pak)
-                        return pak
-
-                if not self._reading:
-                    self._reading = True        # Sets a flag so that only one thread will try to read at a time.
-
-                    # Nothing found - read the next packet
-                    pak = BnlsReader(await self._reader.readexactly(3))
-                    self.logger.debug("Received BNLS packet 0x%0.2X (length: %i)", pak.packet_id, len(pak))
-                    pak.append(await self._reader.readexactly(len(pak) - 3))
-
-                    self._reading = False
-
-                    # Add the packet to the receive buffer
-                    self._received.append(pak)
-                else:
-                    # If we can't yield to receive data, just sleep.
-                    await asyncio.sleep(0.01)
-
-        except asyncio.IncompleteReadError:
-            if self._connected:
-                self.logger.error("The BNLS server closed the connection.")
-                self._connected = False
-
-            self._reading = False
-            self._writer = None
-            self._reader = None
 
     async def authorize(self, bot_id, password):
         """ Logs in to the BNLS server.
@@ -144,26 +142,21 @@ class BnlsClient:
         # Send the initial authorization request
         pak = BnlsPacket(BNLS_AUTHORIZE)
         pak.insert_string(bot_id)
-        await self.send_packet(pak)
+        reply = await self.send_and_wait(pak)
 
-        # Receive response and calculate the BNLS checksum (https://bnetdocs.org/document/23/bnls-checksum-algorithm)
-        pak = await self.wait_for_packet(BNLS_AUTHORIZE)
-        if pak is None:
-            return None
-        code = pak.get_dword()
+        # Calculate the BNLS checksum (https://bnetdocs.org/document/23/bnls-checksum-algorithm)
+        code = reply.get_dword()
         checksum = crc32((password + code.hex().upper()).encode('ascii'))
 
         # Send the challenge response
         pak = BnlsPacket(BNLS_AUTHORIZEPROOF)
         pak.insert_dword(checksum)
-        await self.send_packet(pak)
+        reply = await self.send_and_wait(pak)
 
-        # Receive authorization status
-        pak = await self.wait_for_packet(BNLS_AUTHORIZEPROOF)
-        if pak is None:
-            return None
-        status = pak.get_dword()
-        self._external_ip = pak.get_ipv4()
+        status = reply.get_dword()
+        if reply.position < reply.length:
+            # Not all servers will return this field
+            self._external_ip = reply.get_ipv4()
         return status == 0
 
     async def request_version_byte(self, product_code):
@@ -177,29 +170,26 @@ class BnlsClient:
                 - https://bnetdocs.org/packet/181/bnls-requestversionbyte
                 - https://bnetdocs.org/packet/134/bnls-requestversionbyte
         """
-        product = self.products.get(product_code.upper())
+        product = self.products.get(product_code)
         self._version_requests.append(product.code)
 
         # Make the request.
         pak = BnlsPacket(BNLS_REQUESTVERSIONBYTE)
         pak.insert_dword(product.bnls_id)
-        await self.send_packet(pak)
 
         # BNLS returns a 0 for the product on failure, so there's no way to match that response to the request
         #   if there are multiple requests pending.
         def find_verbyte_response(p):
             prod = p.get_dword(peek=True)
-            return (prod == 0 and len(self._version_requests) == 1) or (prod == product)
+            return (prod == 0 and len(self._version_requests) == 1) or (prod == product.bnls_id)
 
         # Wait for a response with this product.
-        pak = await self.wait_for_packet(BNLS_REQUESTVERSIONBYTE, find_verbyte_response)
-        if pak is None:
-            return None
+        reply = await self.send_and_wait(pak, find_verbyte_response)
         self._version_requests.remove(product.code)
-        if pak.get_dword() == 0:
+        if reply.get_dword() == 0:
             return False     # Explicit failure response
         else:
-            product.verbyte = pak.get_dword()
+            product.verbyte = reply.get_dword()
             return product.verbyte
 
     async def check_version(self, product_code, timestamp, archive, formula, flags=0):
@@ -217,7 +207,7 @@ class BnlsClient:
                 - https://bnetdocs.org/packet/260/bnls-versioncheckex2
                 - https://bnetdocs.org/packet/125/bnls-versioncheckex2
         """
-        product = self.products.get(product_code.upper())
+        product = self.products.get(product_code)
         cookie = self._get_cookie()
 
         # Send the request
@@ -227,8 +217,8 @@ class BnlsClient:
         pak.insert_dword(cookie)
         pak.insert_filetime(timestamp) if isinstance(timestamp, datetime) else pak.insert_long(timestamp)
         pak.insert_string(archive)
-        pak.insert_string(formula)
-        await self.send_packet(pak)
+        pak.insert_raw(formula)
+        pak.insert_byte(0)
 
         # Function to extract and match the cookie from a response packet.
         def find_crev_response(p):
@@ -237,7 +227,7 @@ class BnlsClient:
 
             if p.get_dword() == 1:
                 p.get_raw(8)
-                p.get_string()
+                p.get_string(encoding=None)
                 if p.get_dword() == cookie:
                     match = True
             elif p.get_dword() == cookie:
@@ -247,16 +237,16 @@ class BnlsClient:
             return match
 
         # Receive the response and fill out the product object
-        pak = await self.wait_for_packet(BNLS_VERSIONCHECKEX2, find_crev_response)
+        reply = await self.send_and_wait(pak, find_crev_response)
         self._release_cookie(cookie)
-        if pak and pak.get_dword() == 1:
+        if reply and reply.get_dword() == 1:
             results = CheckRevisionResults(product.code)
-            results.version = pak.get_dword()
-            results.checksum = pak.get_dword()
-            results.info = pak.get_string()
-            pak.get_dword()
+            results.version = reply.get_dword()
+            results.checksum = reply.get_dword()
+            results.info = reply.get_string(encoding=None)
+            reply.get_dword()                                   # cookie, was checked in the matcher
 
-            product.verbyte = pak.get_dword()
+            product.verbyte = reply.get_dword()
             product.check = results
             return product
         else:
@@ -295,8 +285,6 @@ class BnlsClient:
             cookie = kwargs.get("cookie", self._get_cookie())
             pak.insert_dword(cookie)
 
-        await self.send_packet(pak)
-
         # Function to match the response packet
         def find_hash_data_response(p):
             if cookie is None:
@@ -308,8 +296,8 @@ class BnlsClient:
             return match
 
         # Receive the response
-        pak = await self.wait_for_packet(BNLS_HASHDATA, find_hash_data_response)
-        return pak.get_raw(20) if pak else None
+        reply = await self.send_and_wait(pak, find_hash_data_response)
+        return reply.get_raw(20)
 
     async def verify_server(self, server_ip, signature):
         """Verifies a WarCraft 3 server signature.
@@ -330,8 +318,7 @@ class BnlsClient:
         pak = BnlsPacket(BNLS_VERIFYSERVER)
         pak.insert_dword(server_ip)
         pak.insert_raw(signature)
-        await self.send_packet(pak)
 
         # Receive the response
-        pak = await self.wait_for_packet(BNLS_VERIFYSERVER)
-        return pak.get_dword() == 1 if pak else None
+        reply = await self.send_and_wait(pak)
+        return reply.get_dword() == 1
