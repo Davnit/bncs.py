@@ -6,7 +6,7 @@ import hashlib
 import logging
 import sys
 
-import bnftp.client
+import bnftp
 
 
 log = logging.getLogger("BNFTP")
@@ -37,7 +37,7 @@ async def main():
         log.error("Invalid server/port specified. Use format: <host>[:port]")
         sys.exit(1)
 
-    client = bnftp.client.BnftpClient(host, port)
+    client = bnftp.BnftpClient(host, port)
 
     try:
         if args.ftime.isdigit():
@@ -60,7 +60,8 @@ async def main():
     }
 
     saved_to, filetime = await client.download(args.file, args.outfile, args.key, **request)
-    log.info("File saved to '%s'.", saved_to)
+    if not saved_to:
+        sys.exit(1)
 
     if args.hash:
         blocksize = 64 * 1000
@@ -74,4 +75,7 @@ async def main():
 
 
 if __name__ == "__main__":
+    if sys.version_info[0] == 3 and sys.version_info[1] >= 8 and sys.platform.startswith('win'):
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
     asyncio.run(main())

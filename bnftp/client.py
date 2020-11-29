@@ -47,9 +47,11 @@ class BnftpClient:
                 self.logger.error("CD key is for a different product.")
                 return None, None
 
+        self.logger.info("Connecting to BNFTP server at '%s'..." % self.host)
         reader, writer = await asyncio.open_connection(self.host, self.port, family=socket.AF_INET)
         self.logger.debug("Connected to '%s'.", writer.get_extra_info("peername"))
         writer.write(b'\x02')           # Protocol selection (0x02 - BNFTP)
+        await writer.drain()
 
         self.logger.info("Requesting file '%s' ...", filename)
         pak = DataBuffer()
