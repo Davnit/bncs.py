@@ -12,7 +12,7 @@ class CheckRevisionResults:
 
     def __str__(self):
         if self.success:
-            return "CRev Results:%s version: %s, checksum: %.8x, info: '%s'" % \
+            return "CRev Results:%s version: %s, checksum: %.8x, info: %s" % \
                    ((" %s - " % self.product) if self.product else "",
                     self.get_version_string(), self.checksum, self.info)
         else:

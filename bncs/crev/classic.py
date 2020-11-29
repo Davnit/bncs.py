@@ -43,14 +43,15 @@ def get_hashcode(mpq):
     return HASH_CODES[num]
 
 
-def get_file_version_and_info(file):
-    # Read data from EXE PE structure
-    # TODO: Find some way to optimize PE.. it's kind of slow.
-    pe = pefile.PE(file)
+def get_file_version_and_info(file, skip_cache=False):
+    from .main import get_cached_pe_data, cache_pe_data
+    if (pe := get_cached_pe_data(file, skip_cache)) is None:
+        pe = pefile.PE(file)
+        cache_pe_data(file, pe)
 
     # EXE Version
     ffi = pe.VS_FIXEDFILEINFO[0]
-    vb = struct.pack('>II', ffi.FileVersionMS, ffi.FileVersionLS)
+    vb = struct.pack('!II', ffi.FileVersionMS, ffi.FileVersionLS)
     vb = bytes([vb[x] for x in range(1, len(vb), 2)])     # Only use every other byte
     ver = struct.unpack('!I', vb)[0]
 
@@ -71,6 +72,9 @@ def check_version(formula, mpq, files):
     mpq: the name of the MPQ file variant used to seed the check
     files: a list of files that should be included in the check
     """
+    if isinstance(formula, (bytes, bytearray)):
+        formula = formula.decode('ascii')
+
     tokens = list(formula.split(' '))
 
     # Set initial values from formula
@@ -121,22 +125,22 @@ def check_version(formula, mpq, files):
             s |= ((data[i + 3] << 24) & 0xff000000)
 
             z = opc[0]
-            a = a ^ s if z == '^' else a + s if z == '+' else a - s if z == '-' else a * s if z == '*' else a / s
+            a = a ^ s if z == '^' else a + s if z == '+' else a - s if z == '-' else a * s if z == '*' else a // s
             a &= 0xffffffffffffffff
 
             z = opc[1]
-            b = b ^ c if z == '^' else b + c if z == '+' else b - c if z == '-' else b * c if z == '*' else b / c
+            b = b ^ c if z == '^' else b + c if z == '+' else b - c if z == '-' else b * c if z == '*' else b // c
             b &= 0xffffffffffffffff
 
             z = opc[2]
-            c = c ^ a if z == '^' else c + a if z == '+' else c - a if z == '-' else c * a if z == '*' else c / a
+            c = c ^ a if z == '^' else c + a if z == '+' else c - a if z == '-' else c * a if z == '*' else c // a
             c &= 0xffffffffffffffff
 
             z = opc[3]
-            a = a ^ b if z == '^' else a + b if z == '+' else a - b if z == '-' else a * b if z == '*' else a / b
+            a = a ^ b if z == '^' else a + b if z == '+' else a - b if z == '-' else a * b if z == '*' else a // b
             a &= 0xffffffffffffffff
 
-    check = c & 0xffffffff
+    check = int(c) & 0xffffffff
     return check
 
 
@@ -199,7 +203,7 @@ def check_version_slow(formula, mpq, files):
                 elif op == '*':
                     values[mod[0]] = (values[mod[1]] * values[mod[3]]) & 0xffffffffffffffff
                 elif op == '/':
-                    values[mod[0]] = (values[mod[1]] / values[mod[3]]) & 0xffffffffffffffff
+                    values[mod[0]] = (values[mod[1]] // values[mod[3]]) & 0xffffffffffffffff
 
     check = values[check_var] & 0xffffffff
     return check
