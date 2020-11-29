@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from setuptools import setup
+from setuptools import setup, find_packages
 
 
 setup(
@@ -10,7 +10,7 @@ setup(
     author='Davnit',
     author_email='david@davnit.net',
     url='https://github.com/Davnit/bncs.py',
-    packages=['bncs', 'bnftp', 'bnls', 'botnet', 'capi'],
+    packages=find_packages(),
     install_requires=['pefile', 'signify'],
     python_requires='>=3.7'
 )
