@@ -5,6 +5,7 @@ from . import utils
 
 from .packets import *
 
+from .client import BnetClient, ChatEvent
 
 # Chat event IDs
 from .chat import EID_SHOWUSER, EID_JOIN, EID_LEAVE, EID_WHISPER, EID_TALK, EID_BROADCAST, EID_CHANNEL, EID_USERFLAGS, \
