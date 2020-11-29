@@ -1,5 +1,8 @@
 
-from struct import unpack
+import enum
+import json
+import pkg_resources
+import struct
 
 PRODUCT_STAR = "STAR"
 PRODUCT_SEXP = "SEXP"
@@ -15,29 +18,76 @@ PRODUCT_SSHR = "SSHR"
 PRODUCT_W3DM = "W3DM"
 PRODUCT_CHAT = "CHAT"
 
-LOGON_NONE = -1     # No logon system available
-LOGON_LEGACY = 0    # Legacy logon system
-LOGON_OLD = 1       # Old logon system
-LOGON_NEW = 2       # New logon system (NLS)
-LOGON_CHAT = -2     # Legacy telnet CHAT protocol
+
+class LogonMechanism(enum.Enum):
+    NoLogin, Legacy, Old, New, Chat = range(5)
+
+
+supported_products = {}
+
+
+_logon_mechanism_values = {
+    LogonMechanism.NoLogin: [None, "none"],
+    LogonMechanism.Legacy: ["legacy", "lls"],
+    LogonMechanism.Old: ["old", "ols"],
+    LogonMechanism.New: ["new", "nls"],
+    LogonMechanism.Chat: ["chat", "telnet"]
+}
+
+
+def load_product_metadata(source):
+    global supported_products
+
+    if isinstance(source, bytes):
+        data = json.loads(source)
+    else:
+        with open(source) as fh:
+            data = json.load(fh)
+
+    products = data.get("bncs-product-definitions")
+    if products is None:
+        raise KeyError("Invalid product definitions file - bad root node")
+
+    for code, meta in products.items():
+        product = BncsProduct(code, meta["name"])
+        product.bnls_id = meta.get("bnls_id")
+        product.required_keys = meta.get("required_keys", [])
+        product.home_channel = meta.get("first_join_channel", product.home_channel)
+        product.home_flags = meta.get("first_join_flags", 1)
+        product.uses_udp = meta.get("udp", False)
+
+        logon = meta.get("logon_mechanism", LogonMechanism.NoLogin)
+        for mechanism, values in _logon_mechanism_values.items():
+            if logon in values or (isinstance(logon, str) and logon.lower() in values):
+                product.logon_mechanism = mechanism
+                break
+
+        supported_products[code] = product
 
 
 class BncsProduct:
-    def __init__(self, code, full_name, bnls_id=None, num_keys=None, channel=None, logon_type=None):
-        self.code = code
+    def __init__(self, code, full_name):
+        self.code = code.upper()
         self.name = full_name
-        self.bnls_id = bnls_id
-        self.num_keys = num_keys or (2 if code.endswith("XP") else 1)
-        self.home_channel = channel or full_name.split(":")[0]
-        self.logon_type = logon_type or LOGON_NEW
+
+        self.bnls_id = None
+        self.required_keys = []
+        self.logon_mechanism = None
+        self.home_channel = full_name.split(":")[0]
+        self.home_flags = 1
+        self.uses_udp = False
+
+    def __eq__(self, other):
+        return isinstance(other, BncsProduct) and other.code == self.code
 
     def get_product_dword(self):
         """Returns the product code as a DWORD"""
-        return unpack("<I", self.code.encode("ascii"))
+        return struct.unpack("<I", self.code.encode("ascii"))[0]
 
+    @property
     def can_logon(self):
         """Returns TRUE if the product has a known logon system."""
-        return self.logon_type != -1
+        return self.logon_mechanism != LogonMechanism.NoLogin
 
     @staticmethod
     def get(pid):
@@ -45,42 +95,29 @@ class BncsProduct:
 
             ID can be the DWORD (both string and int), the full name of the product, or the BNLS ID.
             """
+        if not supported_products:
+            load_product_metadata(pkg_resources.resource_string(__name__, 'products.json'))
+
         if isinstance(pid, str):
             pid = pid.upper()
 
             # First try the product code DWORD-string
             if len(pid) == 4:
-                if pid in products.keys():
-                    return products.get(pid)
+                if pid in supported_products.keys():
+                    return supported_products.get(pid)
 
-                rid = ''.join(reversed(id))
-                if rid in products.keys():
-                    return products.get(rid)
+                rid = ''.join(reversed(pid))
+                if rid in supported_products:
+                    return supported_products[rid]
 
             # Next try the full name of the product.
-            for prod in products.values():
+            for prod in supported_products.values():
                 if prod.name.upper() == pid:
                     return prod
 
         elif isinstance(pid, int):
-            for prod in products.values():
+            for prod in supported_products.values():
                 if prod.get_product_dword() == pid or prod.bnls_id == pid:
                     return prod
 
         return None
-
-
-products = {
-    PRODUCT_STAR: BncsProduct(PRODUCT_STAR, "StarCraft", 0x01, 0, "StarCraft", LOGON_NONE),
-    PRODUCT_SEXP: BncsProduct(PRODUCT_SEXP, "StarCraft: Brood War", 0x02, 0, "Brood War", LOGON_NONE),
-    PRODUCT_W2BN: BncsProduct(PRODUCT_W2BN, "WarCraft II: Battle.net Edition", 0x03, 1, "WarCraft II", LOGON_OLD),
-    PRODUCT_D2DV: BncsProduct(PRODUCT_D2DV, "Diablo II", 0x04, 1, "Diablo II", LOGON_NEW),
-    PRODUCT_D2XP: BncsProduct(PRODUCT_D2XP, "Diablo II: Lord of Destruction", 0x05, 2, "Diablo II", LOGON_NEW),
-    PRODUCT_WAR3: BncsProduct(PRODUCT_WAR3, "WarCraft III: Reign of Chaos", 0x07, 1, "W3", LOGON_NEW),
-    PRODUCT_W3XP: BncsProduct(PRODUCT_W3XP, "WarCraft III: The Frozen Throne", 0x08, 2, "W3", LOGON_NEW),
-    PRODUCT_DSHR: BncsProduct(PRODUCT_DSHR, "Diablo Shareware", 0x0A, 0, "Diablo Shareware", LOGON_OLD),
-    PRODUCT_DRTL: BncsProduct(PRODUCT_DRTL, "Diablo", 0x09, 0, "Diablo Retail", LOGON_OLD),
-    PRODUCT_SSHR: BncsProduct(PRODUCT_SSHR, "StarCraft Shareware", 0x0B, 0, "StarCraft", LOGON_NONE),
-    PRODUCT_JSTR: BncsProduct(PRODUCT_JSTR, "Japanese StarCraft", 0x06, 0, "StarCraft", LOGON_NONE),
-    PRODUCT_CHAT: BncsProduct(PRODUCT_CHAT, "Telnet Chat", None, 0, "Telnet", LOGON_CHAT)
-}

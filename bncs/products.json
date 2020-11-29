@@ -1,0 +1,139 @@
+{
+    "bncs-product-definitions": {
+        "STAR": {
+            "name": "StarCraft",
+            "required_keys": [
+                "STAR"
+            ],
+            "logon_mechanism": "new",
+            "first_join_channel": "StarCraft",
+            "first_join_flags": 1,
+            "bnls_id": 1,
+            "udp": true
+        },
+        "SEXP": {
+            "name": "StarCraft: Brood War",
+            "required_keys": [
+                "STAR"
+            ],
+            "logon_mechanism": "new",
+            "first_join_channel": "Brood War",
+            "first_join_flags": 1,
+            "bnls_id": 2,
+            "udp": true
+        },
+        "W2BN": {
+            "name": "WarCraft II: Battle.net Edition",
+            "required_keys": [
+                "W2BN"
+            ],
+            "logon_mechanism": "old",
+            "first_join_channel": "WarCraft II",
+            "first_join_flags": 1,
+            "bnls_id": 3,
+            "udp": true
+        },
+        "D2DV": {
+            "name": "Diablo II",
+            "required_keys": [
+                "D2DV"
+            ],
+            "logon_mechanism": "new",
+            "first_join_channel": "Diablo II",
+            "first_join_flags": 5,
+            "bnls_id": 4,
+            "udp": false
+        },
+        "D2XP": {
+            "name": "Diablo II: Lord of Destruction",
+            "required_keys": [
+                "D2DV",
+                "D2XP"
+            ],
+            "logon_mechanism": "new",
+            "first_join_channel": "Diablo II",
+            "first_join_flags": 5,
+            "bnls_id": 5,
+            "udp": false
+        },
+        "JSTR": {
+            "name": "Japanese StarCraft",
+            "required_keys": [
+                "STAR"
+            ],
+            "logon_mechanism": "legacy",
+            "first_join_channel": "StarCraft",
+            "first_join_flags": 1,
+            "bnls_id": 6,
+            "udp": true
+        },
+        "WAR3": {
+            "name": "WarCraft III: Reign of Chaos",
+            "required_keys": [
+                "WAR3"
+            ],
+            "logon_mechanism": "new",
+            "first_join_channel": "W3",
+            "first_join_flags": 1,
+            "bnls_id": 7,
+            "udp": false
+        },
+        "W3XP": {
+            "name": "WarCraft III: The Frozen Throne",
+            "required_keys": [
+                "WAR3",
+                "W3XP"
+            ],
+            "logon_mechanism": "new",
+            "first_join_channel": "W3",
+            "first_join_flags": 1,
+            "bnls_id": 8,
+            "udp": false
+        },
+        "DRTL": {
+            "name": "Diablo Retail",
+            "required_keys": [],
+            "logon_mechanism": "old",
+            "first_join_channel": "Diablo Retail",
+            "first_join_flags": 1,
+            "bnls_id": 9,
+            "udp": true
+        },
+        "DSHR": {
+            "name": "Diablo Shareware",
+            "required_keys": [],
+            "logon_mechanism": "old",
+            "first_join_channel": "Diablo Shareware",
+            "first_join_flags": 1,
+            "bnls_id": 10,
+            "udp": true
+        },
+        "SSHR": {
+            "name": "StarCraft Shareware",
+            "required_keys": [],
+            "logon_mechanism": "legacy",
+            "first_join_channel": "StarCraft",
+            "first_join_flags": 1,
+            "bnls_id": 11,
+            "udp": true
+        },
+        "W3DM": {
+            "name": "WarCraft III Demo",
+            "required_keys": ["WAR3"],
+            "logon_mechanism": "new",
+            "first_join_channel": "W3",
+            "first_join_flags": 1,
+            "bnls_id": null,
+            "udp": false
+        },
+        "CHAT": {
+            "name": "Telnet Chat",
+            "required_keys": [],
+            "logon_mechanism": "telnet",
+            "first_join_channel": "Public Chat",
+            "first_join_flags": 1,
+            "bnls_id": -1,
+            "udp": false
+        }
+    }
+}

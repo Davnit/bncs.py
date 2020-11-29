@@ -12,5 +12,9 @@ setup(
     url='https://github.com/Davnit/bncs.py',
     packages=find_packages(),
     install_requires=['pefile', 'signify'],
+    package_data={
+        ".": ["products.json"]
+    },
+    include_package_data=True,
     python_requires='>=3.8'
 )
