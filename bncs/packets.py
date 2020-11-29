@@ -1,4 +1,7 @@
 
+from bncs.utils import PacketBuilder, PacketReader, DataBuffer
+
+
 # Packet constants
 SID_NULL                        = 0x00
 SID_STOPADV                     = 0x02
@@ -107,3 +110,59 @@ SID_CLANMEMBERREMOVED           = 0x7E
 SID_CLANMEMBERSTATUSCHANGE      = 0x7F
 SID_CLANMEMBERRANKCHANGE        = 0x81
 SID_CLANMEMBERINFORMATION       = 0x82
+
+
+class BncsPacket(PacketBuilder):
+    def __init__(self, packet_id):
+        super().__init__(packet_id)
+
+    @property
+    def length(self):
+        return self.__len__()
+
+    def __len__(self):
+        return super().__len__() + 4
+
+    def __str__(self):
+        return "BNCS " + super().__str__()
+
+    def get_data(self):
+        buff = DataBuffer()
+        buff.insert_byte(0xFF)
+        buff.insert_byte(self.packet_id)
+        buff.insert_word(self.__len__())
+        buff.insert_raw(self.data)
+        return buff.data
+
+
+class BncsReader(PacketReader):
+    def __init__(self, data):
+        if len(data) < 4:
+            raise ValueError("Packet data must contain at least 4 bytes.")
+
+        super().__init__(data)
+        if self.get_byte() != 0xFF:
+            raise ValueError("Invalid BNCS packet header")
+
+        self.packet_id = self.get_byte()
+        self.length = self.get_word()
+
+    def __len__(self):
+        return self.length
+
+    def __str__(self):
+        return "BNCS " + super().__str__()
+
+    @classmethod
+    async def read_from(cls, reader):
+        from asyncio import IncompleteReadError
+
+        try:
+            packet = cls(await reader.readexactly(4))
+        except IncompleteReadError:
+            return None     # Not enough data was available
+        except ValueError:
+            return False    # Packet data is invalid
+
+        await packet.fill(reader)
+        return packet

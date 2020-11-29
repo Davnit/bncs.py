@@ -65,3 +65,15 @@ class BnlsReader(PacketReader):
 
     def __str__(self):
         return "BNLS " + super().__str__()
+
+    @classmethod
+    async def read_from(cls, reader):
+        from asyncio import IncompleteReadError
+
+        try:
+            packet = BnlsReader(await reader.readexactly(3))
+        except IncompleteReadError:
+            return None
+
+        await packet.fill(reader)
+        return packet

@@ -1,5 +1,5 @@
 
-from .buffer import DataBuffer, DataReader
+from .buffer import DataBuffer, DataReader, format_buffer
 
 
 class PacketBuilder(DataBuffer):
@@ -9,8 +9,15 @@ class PacketBuilder(DataBuffer):
         self.packet_id = packet_id
         super().__init__()
 
+    @property
+    def length(self):
+        return super().__len__()
+
     def __str__(self):
         return "Packet 0x%0.2X (length: %i)" % (self.packet_id, len(self))
+
+    def __repr__(self):
+        return format_buffer(self.get_data())
 
     def get_data(self):
         """Returns the full packet data including the header."""
@@ -37,14 +44,36 @@ class PacketReader(DataReader):
 
     @property
     def data_len(self):
-        """Returns the actual number of bytes received into the packet."""
+        """The actual number of bytes in the packet."""
         return super().__len__()
+
+    @property
+    def missing(self):
+        """The number of additional bytes needed to complete the packet."""
+        return self.length - self.data_len
 
     def is_full_packet(self):
         """Returns True if an entire packet has been received."""
-        return self.data_len >= self.length
+        return self.missing == 0
 
     def append(self, data):
         """Adds additional raw data onto the end of the packet."""
         self.data += data
         return self.is_full_packet()
+
+    async def fill(self, reader):
+        """Reads the remaining packet data from an asyncio StreamReader instance.
+
+            This method should only be called AFTER the packet header is read. Returns success.
+        """
+        from asyncio import IncompleteReadError
+
+        if not self.is_full_packet():
+            try:
+                self.append(await reader.readexactly(self.missing))
+            except IncompleteReadError as ire:
+                self.append(ire.partial)
+                return False
+
+        return True
+
