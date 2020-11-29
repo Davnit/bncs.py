@@ -1,5 +1,5 @@
 
-from .xsha import xsha1
+from .bsha import xsha1
 
 from struct import pack, unpack
 from hashlib import sha1
