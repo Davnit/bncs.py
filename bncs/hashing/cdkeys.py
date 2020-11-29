@@ -2,7 +2,6 @@
 from .xsha import xsha1
 
 from struct import pack, unpack
-from ctypes import c_byte, c_int32, c_uint32
 from hashlib import sha1
 from abc import ABC, abstractmethod
 
@@ -67,41 +66,6 @@ translate = bytearray(b'\x09\x04\x07\x0F\x0D\x0A\x03\x0B\x01\x02\x0C\x08\x06\x0E
                       b'\x03\x08\x0E\x00\x07\x09\x0F\x0C\x01\x06\x0D\x02\x05\x0A\x0B\x04'
                       b'\x03\x0A\x0C\x04\x0D\x0B\x09\x0E\x0F\x06\x01\x07\x02\x00\x05\x08')
 
-key_table = bytearray(b'\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF'
-                      b'\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF'
-                      b'\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF'
-                      b'\xFF\xFF\x00\xFF\x01\xFF\x02\x03\x04\x05\xFF\xFF\xFF\xFF\xFF\xFF'
-                      b'\xFF\xFF\x06\x07\x08\x09\x0A\x0B\x0C\xFF\x0D\x0E\xFF\x0F\x10\xFF'
-                      b'\x11\xFF\x12\xFF\x13\xFF\x14\x15\x16\x17\x18\xFF\xFF\xFF\xFF\xFF'
-                      b'\xFF\xFF\x06\x07\x08\x09\x0A\x0B\x0C\xFF\x0D\x0E\xFF\x0F\x10\xFF'
-                      b'\x11\xFF\x12\xFF\x13\xFF\x14\x15\x16\x17\x18\xFF\xFF\xFF\xFF\xFF'
-                      b'\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF'
-                      b'\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF'
-                      b'\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF'
-                      b'\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF'
-                      b'\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF'
-                      b'\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF'
-                      b'\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF'
-                      b'\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF')
-
-alpha_map = [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-             -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-             -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 0x00,
-             -1, 0x01, -1, 0x02, 0x03, 0x04, 0x05, -1, -1, -1, -1, -1, -1, -1, -1,
-             0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, -1, 0x0D, 0x0E, -1, 0x0F,
-             0x10, -1, 0x11, -1, 0x12, -1, 0x13, -1, 0x14, 0x15, 0x16, -1, 0x17,
-             -1, -1, -1, -1, -1, -1, -1, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C,
-             -1, 0x0D, 0x0E, -1, 0x0F, 0x10, -1, 0x11, -1, 0x12, -1, 0x13, -1,
-             0x14, 0x15, 0x16, -1, 0x17, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-             -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-             -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-             -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-             -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-             -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-             -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-             -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-             -1, -1, -1, -1]
-
 
 def get_hex(v):
     v &= 0xF
@@ -115,21 +79,17 @@ class KeyDecoder(ABC):
 
         key: the CD key to decode
         """
-        length = len(key)
-        if length == 13:
-            return SCKeyDecoder(key)
-        elif length == 16:
-            return D2KeyDecoder(key)
-        elif length == 26:
-            return W3KeyDecoder(key)
-        else:
-            raise ValueError("Unsupported key length: %i" % length)
+        decoder = decoder_lookup.get(len(key))
+        if not decoder:
+            raise ValueError("Unsupported key length: %i" % len(key))
+        return decoder(key)
 
     def __init__(self, key):
         self.key = key.upper()
-        self.product = None
-        self.public = None
-        self.private = None
+        self.product = 0
+        self.public = 0
+        self.private = 0
+        self.unknown = 0
 
     def __len__(self):
         return len(self.key)
@@ -166,8 +126,25 @@ class KeyDecoder(ABC):
         pk = self._get_lookup_key()
         return products[pk][1] if pk in products else ''
 
+    def _preset(self, product, public, private):
+        self.product = product
+        self.public = public
+        self.private = private
+        return self
+
+    @staticmethod
+    def create_key(length, product, public, private):
+        decoder = decoder_lookup.get(length)
+        if not decoder:
+            raise ValueError("Invalid key length")
+
+        return decoder.encode(product, public, private)
+
 
 class SCKeyDecoder(KeyDecoder):
+    SALT = 0x13AC9741
+    ALPHA = (6, 0, 2, 9, 3, 11, 1, 7, 5, 4, 10, 8)
+
     def __init__(self, key):
         super().__init__(key)
         if len(key) != 13:
@@ -177,47 +154,62 @@ class SCKeyDecoder(KeyDecoder):
         if not super().get_hash(client_token, server_token):
             return None
 
-        buf = pack('6L', client_token, server_token, self.product, self.public, 0, self.private)
+        buf = pack('6L', client_token, server_token, self.product, self.public, self.unknown, self.private)
         return xsha1(buf).digest()
 
+    @staticmethod
+    def _get_check_digit(value):
+        chk = 3
+        for i in range(0, 12):
+            chk += ((value[i] - 48) ^ (chk * 2))
+        return str(chk % 10)
+
     def decode(self):
-        key_list = list(self.key)
-        key_str = self.key.lower()
+        key = [ord(v) for v in self.key]
+        decoded = [0] * 12
+        salt = self.SALT
 
-        # Verify
-        accum = 3
-        for i in range(len(key_str) - 1):
-            accum += (ord(key_str[i]) - 48) ^ (accum * 2)
+        for i in range(11, -1, -1):
+            c = key[self.ALPHA[i]]
+            if c <= 55:
+                decoded[i] = (c ^ (salt & 7))
+                salt >>= 3
+            else:
+                decoded[i] = (c ^ i & 1)
 
-        if (accum % 10) != (ord(key_str[12]) - 48):
-            return False
+        valid = chr(key[-1]) == self._get_check_digit(key)
+        if valid:
+            value = ''.join(chr(v) for v in decoded)
+            self.product = int(value[0:2])
+            self.public = int(value[2:9])
+            self.private = int(value[9:12])
 
-        # Shuffle
-        a = 0x0B
-        for i in range(0xC2, 0x06, -0x11):
-            b = (i % 0x0C)
-            key_list[a], key_list[b] = key_list[b], key_list[a]
-            a -= 1
+        return valid
 
-        # Get values
-        hash_key = 0x13AC9741
-        key_str = ''.join(key_list)
-        for i in range(len(key_str) - 2, -1, -1):
-            if key_str[i] <= '7':
-                key_list[i] = chr(ord(key_list[i]) ^ (hash_key & 7))
-                hash_key >>= 3
-            elif key_str[i] < 'A':
-                key_list[i] = chr(ord(key_list[i]) ^ (i & 1))
+    @classmethod
+    def encode(cls, product, public, private):
+        encoded = [0] * 12
+        salt = cls.SALT
 
-        dec = ''.join(key_list)
-        self.product = int(dec[0:2])
-        self.public = int(dec[2:9])
-        self.private = int(dec[9:12])
+        key = str(product).rjust(2, '0') + str(public).rjust(7, '0') + str(private).rjust(3, '0')
 
-        return True
+        for i in range(11, -1, -1):
+            c = ord(key[i])
+            if c <= 55:
+                encoded[cls.ALPHA[i]] = (c ^ (salt & 7))
+                salt >>= 3
+            else:
+                encoded[cls.ALPHA[i]] = (c ^ i & 1)
+
+        check_digit = cls._get_check_digit(encoded)
+        return cls(''.join([chr(i) for i in encoded]) + check_digit)._preset(product, public, private)
 
 
 class D2KeyDecoder(KeyDecoder):
+    SALT = 0x13AC9741
+    ALPHA = (5, 6, 0, 1, 2, 3, 4, 9, 10, 11, 12, 13, 14, 15, 7, 8)
+    CHARS = "246789BCDEFGHJKMNPRTVWXZ"
+
     def __init__(self, key):
         super().__init__(key)
         if len(key) != 16:
@@ -227,172 +219,232 @@ class D2KeyDecoder(KeyDecoder):
         if not super().get_hash(client_token, server_token):
             return None
 
-        buf = pack('6L', client_token, server_token, self.product, self.public, 0, self.private)
+        buf = pack('6L', client_token, server_token, self.product, self.public, self.unknown, self.private)
         return xsha1(buf).digest()
 
     def decode(self):
-        checksum = 0
-        key_list = list(self.key)
+        key = list(self.key)
+        decoded = [0] * 16
+        salt = self.SALT
 
-        for i in range(0, len(self.key), 2):
-            r = 1
-            c1 = alpha_map[ord(self.key[i])]
-            n = c1 * 3
-            c2 = alpha_map[ord(self.key[i + 1])]
-            n = c2 + (n * 8)
+        for i in range(0, 15, 2):
+            if key[i] not in self.CHARS or key[i + 1] not in self.CHARS:
+                return False
 
-            if n >= 0x100:
-                n -= 0x100
-                checksum |= int(2 ** (i / 2))
-
-            n2 = n >> 4
-            key_list[i] = get_hex(n2)
-            key_list[i + 1] = get_hex(n)
-
-            r <<= 1
-
-        v = 3
-        for i in range(16):
-            c = key_list[i].upper()
-            n = (ord(c) - 0x30) if c.isdigit() else (ord(c) - 0x37)
-            n2 = v * 2
-            n ^= n2
-            v += n
-
-        v &= 0xFF
-        if v != checksum:
-            return False
+            n = self.CHARS.index(key[i + 1]) + (self.CHARS.index(key[i]) * 24) & 0xff
+            key[i] = chr((((n >> 4) & 0xf) + 0x30) if (((n >> 4) & 0xf) < 10) else (((n >> 4) & 0xf) + 0x37))
+            key[i + 1] = chr(((n & 0xf) + 0x30) if ((n & 0xf) < 10) else ((n & 0xf) + 0x37))
 
         for i in range(15, -1, -1):
-            c = ord(key_list[i])
-            n = (i - 9) if i > 8 else (0xF - (8 - i))
-            n &= 0xF
-            c2 = ord(key_list[n])
+            c = ord(key[self.ALPHA[i]])
+            if c <= 55:
+                decoded[i] = (c ^ (salt & 7))
+                salt >>= 3
+            elif c < 65:
+                decoded[i] = (c ^ i & 1)
+            else:
+                decoded[i] = c
 
-            key_list[i] = chr(c2)
-            key_list[n] = chr(c)
-
-        v2 = 0x13AC9741
-        for i in range(15, -1, -1):
-            c = ord(key_list[i].upper())
-            key_list[i] = chr(c)
-
-            if key_list[i] <= '7':
-                v = v2
-                c2 = ((c_byte(v & 0xFF).value & 7) ^ c)
-                v >>= 3
-
-                key_list[i] = chr(c2)
-                v2 = v
-            elif key_list[i] < 'A':
-                c2 = ((c_byte(i).value & 1) ^ c)
-                key_list[i] = chr(c2)
-
-        dec = ''.join(key_list)
+        dec = ''.join(chr(v) for v in decoded)
         self.product = int(dec[0:2], 16)
         self.public = int(dec[2:8], 16)
         self.private = int(dec[8:16], 16)
 
         return True
 
+    @classmethod
+    def encode(cls, product, public, private):
+        salt = cls.SALT
+        encoded = [0] * 16
+
+        key = hex(product)[2:].rjust(2, '0') + hex(public)[2:].rjust(6, '0') + hex(private)[2:].rjust(8, '0')
+        key = key.upper()
+
+        for i in range(15, -1, -1):
+            c = ord(key[i])
+            if c <= 55:     # '7'
+                encoded[cls.ALPHA[i]] = (c ^ (salt & 7))
+                salt >>= 3
+            elif c < 65:    # 'A'
+                encoded[cls.ALPHA[i]] = (c ^ i & 1)
+            else:
+                encoded[cls.ALPHA[i]] = c
+
+        def pc(dig):
+            return (dig - 0x30) if chr(dig).isdigit() else (ord(chr(dig).upper()) - 0x37)
+
+        r = 3
+        for i in range(0, 16):
+            r += pc(encoded[i]) ^ (r * 2)
+        r &= 0xff
+
+        tb = 0x80
+        for i in range(14, -1, -2):
+            a, b = pc(encoded[i]), pc(encoded[i + 1])
+            a = int(hex(a)[2:] + hex(b)[2:], 16)
+
+            if r & tb:
+                a += 0x100
+
+            b = 0
+            while a >= 0x18:
+                b += 1
+                a -= 0x18
+
+            encoded[i] = ord(cls.CHARS[b])
+            encoded[i + 1] = ord(cls.CHARS[a])
+            tb //= 2
+
+        return cls(''.join([chr(i) for i in encoded]))._preset(product, public, private)
+
 
 class W3KeyDecoder(KeyDecoder):
+    CHARS = "246789BCDEFGHJKMNPRTVWXYZ"
+    ALPHA = (30, 27, 24, 21, 18, 15, 12, 9, 6, 3, 0, 49, 46, 43, 40, 37, 34, 31, 28, 25,
+             22, 19, 16, 13, 10, 7, 4, 1, 50, 47, 44, 41, 38, 35, 32, 29, 26, 23, 20, 17,
+             14, 11, 8, 5, 2, 51, 48, 45, 42, 39, 36, 33)
+    ORDER = (8, 9, 4, 5, 6, 7, 0, 1, 2, 3)
+
     def __init__(self, key):
         super().__init__(key)
         if len(key) != 26:
             raise ValueError("W3 key decoder only valid for 26-character keys")
+        self.private = [0] * 10
 
     def get_hash(self, client_token, server_token):
         if not super().get_hash(client_token, server_token):
             return None
 
-        buf = pack('<2L2L10b', client_token, server_token, self.product, self.public, *self.private[:10])
+        buf = pack('<2L2L10B', client_token, server_token, self.product, self.public, *self.private[:10])
         return sha1(buf).digest()
 
     def decode(self):
-        table = [0] * 52
-        values = [0] * 4
+        key = list(self.key)
+        digits_b5 = [0] * 52
 
-        # Key table lookup
-        b = 0x21
-        for i in range(26):
-            a = (b + 0x07B5) % 52
-            b = (a + 0x07B5) % 52
+        for i in range(0, 26):
+            if key[i] not in self.CHARS:
+                return False
 
-            key = key_table[ord(self.key[i])]
-            table[a] = int(key / 5)
-            table[b] = int(key % 5)
+            c = self.CHARS.index(key[i])
+            digits_b5[self.ALPHA[i * 2]] = (c // 5) & 0xff
+            digits_b5[self.ALPHA[i * 2 + 1]] = (c % 5) & 0xff
 
-        # Mult
-        rounds = 4
-        mulx = 5
-        for i in range(52, 0, -1):
-            pos_a = pos_b = rounds - 1
-            byte = table[i - 1]
+        n = 0
+        for i in range(51, -1, -1):
+            n = n * 5 + digits_b5[i]
 
-            for j in range(0, rounds):
-                p1 = values[pos_a] & 0x00000000FFFFFFFF
-                pos_a -= 1
+        b = n.to_bytes(n.bit_length() // 8, byteorder='little')
+        nibbles = [0] * 30
+        for i in range(0, 15):
+            for j in range(0, 2):
+                nibbles[(i << 1) + j] = ((b[i] >> (j << 2)) & 0xf) & 0xff
 
-                p2 = mulx & 0x00000000FFFFFFFF
-                edxeax = p1 * p2
+        for r in range(29, -1, -1):
+            index = r * 16
+            perm = translate[index:index+16]
+            c = nibbles[r]
 
-                values[pos_b] = c_int32(byte + c_int32(edxeax).value).value
-                byte = c_int32(edxeax >> 32).value
-                pos_b -= 1
+            for r2 in range(29, -1, -1):
+                if r == r2:
+                    continue
 
-        # Key Table Pass #1
-        var_8 = 29
-        for i in range(464, -1, -16):
-            esi = (var_8 & 7) << 2
-            var_4 = var_8 >> 3
-            var_c = (values[3 - var_4] & (0x0F << esi)) >> esi
+                c = perm[nibbles[r2] ^ perm[c]]
 
-            if i < 464:
-                for j in range(29, var_8, -1):
-                    ecx = (j & 7) << 2
-                    ebp = (values[0x03 - (j >> 3)] & (0x0F << ecx)) >> ecx
-                    var_c = translate[ebp ^ translate[var_c + i] + i]
+            nibbles[r] = perm[c]
 
-            var_8 -= 1
-            for j in range(var_8, -1, -1):
-                ecx = (j & 7) << 2
-                ebp = (values[0x03 - (j >> 3)] & (0x0F << ecx)) >> ecx
-                var_c = translate[ebp ^ translate[var_c + i] + i]
+        length = (len(nibbles) >> 1) - 1
+        tmp = [0] * (length + 1)
+        for i in range(0, length + 1):
+            ni = i << 1
+            tmp[i] = nibbles[ni] | (nibbles[ni | 1] << 4)
 
-            index = 3 - var_4
-            ebx = (translate[var_c + i] & 0x0F) << esi
-            values[index] = (ebx | ~(0x0F << esi) & values[index])
+        bits = [bit == '1' for bit in ''.join(format(byte, '08b')[::-1] for byte in tmp)]
+        for i in range(0, 120):
+            j = (i * 11) % 120
+            if j <= i:
+                continue
 
-        # Key Table Pass #2
-        for i in range(len(values)):
-            values[i] = c_int32(values[i]).value
+            b = bits[i]
+            bits[i] = bits[j]
+            bits[j] = b
 
-        esi = 0
-        copy = pack('<4l', *values)
-        for edi in range(0, 120):
-            eax = edi & 0x1F
-            ecx = esi & 0x1F
-            edx = 3 - (edi >> 5)
+        bb = [0] * 15
+        for i in range(0, 15):
+            for j in range(0, 8):
+                if bits[(i << 3) + j]:
+                    bb[i] = bb[i] | ((0x01 << j) & 0xff)
 
-            loc = 12 - ((esi >> 5) << 2)
-            ebp = unpack('<l', copy[loc:loc+4])[0]
-            ebp = (ebp & (1 << ecx)) >> ecx
+        if bb[0x0E] == 0x00:
+            self.product = bb[0x0D] >> (0x0A & 7)
+            self.public = unpack('<L', bytes(bb[0x0A:0x0A+4]))[0] & 0xffffff
 
-            values[edx] = c_int32(((ebp & 1) << eax) | (~(1 << eax) & values[edx])).value
+            self.private = [0] * 10
+            for i in range(0, 10):
+                self.private[i] = bb[self.ORDER[i]]
+            return True
 
-            esi += 0x0B
-            if esi > 120:
-                esi -= 120
+        return False
 
-        # Get values
-        self.product = values[0] >> 0x0A
-        self.public = ((values[0] & 0x03FF) << 0x10) | c_int32(c_uint32(values[1]).value >> 0x10).value
+    @classmethod
+    def encode(cls, product, public, private):
+        bb = [0] * 15
+        for i in range(0, 10):
+            bb[cls.ORDER[i]] = private[i]
+        bb[0x0A:0x0D] = pack('<L', public)[:3]
+        bb[0x0D] = product << 2
 
-        self.private = [0] * 10
-        self.private[0] = c_byte((values[1] & 0x00FF) >> 0).value
-        self.private[1] = c_byte((values[1] & 0xFF00) >> 8).value
-        self.private[2:6] = unpack('<4b', pack('<l', values[2]))
-        self.private[6:10] = unpack('<4b', pack('<l', values[3]))
+        bits = [bit == '1' for bit in ''.join(format(byte, '08b')[::-1] for byte in bb)]
+        for i in range(0, 120):
+            j = (i * 11) % 120
+            if j <= i:
+                continue
 
-        return True
+            b = bits[i]
+            bits[i] = bits[j]
+            bits[j] = b
+
+        nibbles = [0] * 30
+        for i in range(0, 30):
+            for j in range(3, -1, -1):
+                if bits[i * 4 + j]:
+                    nibbles[i] = nibbles[i] | (0x01 << j)
+
+        for r in range(0, 30):
+            index = r * 16
+            perm = translate[index:index+16]
+            c = perm.index(nibbles[r])
+
+            for r2 in range(0, 30):
+                if r == r2:
+                    continue
+
+                c = perm.index(nibbles[r2] ^ perm.index(c))
+
+            nibbles[r] = c
+
+        length = (len(nibbles) >> 1) - 1
+        tmp = [0] * (length + 1)
+        for i in range(0, length + 1):
+            ni = i << 1
+            tmp[i] = nibbles[ni] | (nibbles[ni | 1] << 4)
+
+        n = int.from_bytes(tmp, byteorder='little')
+        digits_b5 = [0] * 52
+        for i in range(0, 52):
+            digits_b5[i] = n % 5
+            n = (n - digits_b5[i]) // 5
+
+        key = ""
+        for i in range(0, 26):
+            bc = (digits_b5[cls.ALPHA[i * 2]] * 5) + (digits_b5[cls.ALPHA[i * 2 + 1]])
+            key += cls.CHARS[bc]
+
+        return cls(key)._preset(product, public, private)
+
+
+decoder_lookup = {
+    13: SCKeyDecoder,
+    16: D2KeyDecoder,
+    26: W3KeyDecoder
+}
