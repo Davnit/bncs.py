@@ -75,7 +75,7 @@ def format_buffer(data):
 class DataBuffer:
     def __init__(self, data=None):
         if isinstance(data, (bytes, bytearray)):
-            self.data = data
+            self.data = bytes(data)
         elif data is None:
             self.data = b''
         else:
@@ -134,6 +134,10 @@ class DataBuffer:
 
     def insert_filetime(self, dt):
         """ Inserts a python datetime object to the end of the buffer as a 64-bit FILETIME. """
+        if isinstance(dt, int):
+            # Sometimes filetimes will be represented as raw integers.
+            return self.insert_long(dt)
+
         if dt.tzinfo is None or (dt.tzinfo.utcoffset(dt) is None):
             dt = dt.replace(tzinfo=_utc)
         ft = _EPOCH_AS_FILETIME + (timegm(dt.timetuple()) * _HUNDREDS_OF_NANOS)
@@ -152,8 +156,16 @@ class DataReader:
     def __init__(self, data=b''):
         if not isinstance(data, (bytes, bytearray)):
             raise TypeError("Unsupported data reader initialization type: %s" % type(data).__name__)
-        self.data = data
+        self.data = bytes(data)
         self.position = 0
+
+    @classmethod
+    def from_hex_string(cls, x):
+        """ Creates a data reader from a string of hex values. """
+        x = x.replace(' ', '')
+        if len(x) % 2 != 0:
+            raise ValueError("Hex string length not even - bytes must be 0-padded")
+        return cls(bytes([int(x[i:i+2], 16) for i in range(0, len(x), 2)]))
 
     def __len__(self):
         return len(self.data)
@@ -199,12 +211,15 @@ class DataReader:
     def get_string(self, encoding='utf-8', term=b'\0', peek=False):
         """ Returns a string starting at the current position and going to the next occurrence of term.
 
+            If encoding is None, a bytes object will be returned
             If term is omitted, a null-byte will be used.
             This is the opposite of DataBuffer.insert_string().
         """
-        r = self.get_raw(self.data.index(term, self.position) - self.position, peek).decode(encoding)
-        self.position += len(term)
-        return r
+        index = self.data.index(term, self.position) if term in self.data[self.position:] else len(self.data)
+        data = self.get_raw(index - self.position, peek)
+        if not peek:
+            self.position += len(term)
+        return data.decode(encoding) if encoding else data
 
     def get_ipv4(self, peek=False):
         """ Returns the next 4 bytes as an IPv4 address string. """
@@ -224,6 +239,6 @@ class DataReader:
         x = calcsize(fmt)
         return unpack(fmt, self.get_raw(x, peek))
 
-    def eop(self):
+    def eob(self):
         """ Returns TRUE if the buffer has been fully read. """
         return self.position >= len(self.data)
