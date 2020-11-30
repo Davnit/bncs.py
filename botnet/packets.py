@@ -1,5 +1,5 @@
 
-from bncs.utils import PacketBuilder, PacketReader, DataBuffer
+from bncs.utils import PacketBuilder, PacketReader, DataBuffer, get_packet_name
 
 
 BOTNET_KEEPALIVE = 0x00
@@ -35,6 +35,9 @@ class BotNetPacket(PacketBuilder):
     def __str__(self):
         return "BotNet " + super().__str__()
 
+    def get_name(self):
+        return get_packet_name(self, globals(), "BOTNET_")
+
     def get_data(self):
         pak = DataBuffer()
         pak.insert_byte(0x01)   # Protocol version (1)
@@ -62,3 +65,6 @@ class BotNetReader(PacketReader):
 
     def __str__(self):
         return "BotNet " + super().__str__()
+
+    def get_name(self):
+        return get_packet_name(self, globals(), "BOTNET_")
