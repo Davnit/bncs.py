@@ -19,7 +19,7 @@ def i2b(i, length=None):
 
     length is the expected length of the array. If None is given, the integer's smallest size will be used.
     """
-    length = length or ((i.bit_length() + 7) // 8)
+    length = ((i.bit_length() + 7) // 8) if length is None else length
     return i.to_bytes(length, DEFAULT_BYTE_ORDER, signed=False)
 
 
@@ -45,15 +45,9 @@ def get_random_of_length(length):
 
 def H(*args):
     """Returns a SHA1 hash of the specified values."""
-    h = sha1()
-    for a in args:
-        if a is not None:
-            if isinstance(a, int):
-                a = i2b(a)
-
-            h.update(a.encode() if hasattr(a, "encode") else a)
-
-    return h.digest()
+    ctx = sha1()
+    [ctx.update(a.encode() if hasattr(a, 'encode') else a) for a in args if isinstance(a, int)]
+    return ctx.digest()
 
 
 def xor_bytes(a, b):
@@ -61,10 +55,7 @@ def xor_bytes(a, b):
     if len(a) != len(b):
         raise ValueError("Both byte arrays must be the same length.")
 
-    res = []
-    for i in range(0, len(a)):
-        res.append(a[i] ^ b[i])
-    return bytes(res)
+    return bytes([a[i] ^ b[i] for i in range(len(a))])
 
 
 def get_modulus(nls_version=2):
@@ -95,7 +86,7 @@ def get_sv(username, password, nls_version=2, salt=None):
     if salt and len(salt) != 32:
         raise ValueError("Salt must be 32 bytes.")
 
-    s = salt or os.urandom(32)
+    s = os.urandom(32) if salt is None else salt
     v = i2b(pow(NLS_GENERATOR, get_x(username, password, s), get_modulus(nls_version)), 32)
     return s, v
 
@@ -109,21 +100,8 @@ def get_K(S):
     """Calculates the password proof."""
     S = i2b(S, 32)
 
-    K = []
-    b1 = []
-    b2 = []
-
-    for i in range(16):
-        b1.append(S[i * 2])
-        b2.append(S[(i * 2) + 1])
-
-    b1 = H(bytes(b1))
-    b2 = H(bytes(b2))
-
-    for i in range(len(b1)):
-        K.append(b1[i])
-        K.append(b2[i])
-
+    K = [0] * 32
+    K[::2], K[1::2] = H(S[::2]), H(S[1::2])
     return bytes(K)
 
 
@@ -150,21 +128,13 @@ class NLSSession:
         # Import/create the private key, this will be either variable 'a' (client) or 'b' (server).
         if private and not isinstance(private, (bytes, bytearray)):
             raise TypeError("Private key must be a byte array.")
-        self._private_key = b2i(private) if private else get_random_of_length(32)
+        self._private_key = get_random_of_length(32) if private is None else b2i(private)
 
         # Set state variable
         self._authenticated = False
 
         # Set NLS variables
-        self.s = None
-        self.v = None
-        self.A = None
-        self.B = None
-        self.u = None
-        self.S = None
-        self.K = None
-        self.M = None
-        self.AMK = None
+        self.s = self.v = self.A = self.B = self.u = self.u = self.S = self.K = self.M = self.AMK = None
 
     def authenticated(self):
         """Returns TRUE if NLS authentication was successful."""
