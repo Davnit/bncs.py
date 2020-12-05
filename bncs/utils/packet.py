@@ -50,7 +50,7 @@ class PacketReader(DataReader):
         return self.length
 
     def __str__(self):
-        if self.packet_id:
+        if self.packet_id is not None:
             if str_id := self.get_name():
                 return "Packet %s (id: 0x%0.2X, length: %i)" % (str_id, self.packet_id, len(self))
             return "Packet 0x%0.2X (length: %i)" % (self.packet_id, len(self))
