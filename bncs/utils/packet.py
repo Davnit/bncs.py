@@ -26,7 +26,7 @@ class PacketBuilder(DataBuffer):
         return "Packet 0x%0.2X (length: %i)" % (self.packet_id, len(self))
 
     def __repr__(self):
-        return self.__str__() + ':\n' + format_buffer(self.get_data())
+        return format_buffer(self.get_data())
 
     def get_name(self):
         """Returns the name of the packet."""
@@ -58,7 +58,7 @@ class PacketReader(DataReader):
             return "Unidentified packet (length: %i)" % self.length
 
     def __repr__(self):
-        return self.__str__() + ':\n' + format_buffer(self.data)
+        return format_buffer(self.data)
 
     def get_name(self):
         """Returns the name of the packet."""
