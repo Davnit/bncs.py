@@ -334,7 +334,7 @@ class W3KeyDecoder(KeyDecoder):
         for i in range(51, -1, -1):
             n = n * 5 + digits_b5[i]
 
-        b = n.to_bytes(n.bit_length() // 8, byteorder='little')
+        b = n.to_bytes(16, byteorder='little')
         nibbles = [0] * 30
         for i in range(0, 15):
             for j in range(0, 2):
