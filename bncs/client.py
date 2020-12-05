@@ -176,9 +176,10 @@ class BnetClient:
         self._disconnected = None            # Disconnected
 
     async def _run_udp_test(self, server_token, udp_token):
-        if self.state["product"].uses_udp:
+        if self.state.get("check_udp", True):
             tx, proto = await self.loop.create_datagram_endpoint(
                 lambda: _UdpTestProtocol(self), remote_addr=self.state["endpoint"], family=socket.AF_INET)
+            self.log.debug(f"Opened UDP socket from {tx.get_extra_info('sockname')} to {tx.get_extra_info('peername')}")
 
             # UDP header consists of only the packet ID
             # https://bnetdocs.org/packet/199/pkt-conntest2
