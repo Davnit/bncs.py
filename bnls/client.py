@@ -49,8 +49,8 @@ class BnlsClient:
             self.writer.close()
             self.log.info(f"Disconnected: {msg}")
 
-        if not self._disconnected_fut.done():
-            self._disconnected_fut.set_result(True)
+            if not self._disconnected_fut.done():
+                self._disconnected_fut.set_result(True)
 
         # Cancel any outstanding waiters
         for (pid, matcher, fut) in self._waiters:
