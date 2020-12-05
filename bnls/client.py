@@ -67,9 +67,7 @@ class BnlsClient:
 
         self.writer.write(packet.get_data())
 
-        self.log.debug(f"Sent BNLS packet 0x{packet.packet_id:02X} ({packet.length} bytes)")
-        if self.config["debug_packets"]:
-            self.log.debug(repr(packet))
+        self.log.debug(f"Sent {str(packet)}" + (('\n' + repr(packet)) if self.config["debug_packets"] else ''))
 
         await self.writer.drain()
         return True
@@ -88,9 +86,7 @@ class BnlsClient:
             if packet is None:
                 return self.disconnect("Server closed the connection")
 
-            self.log.debug(f"Received BNLS packet 0x{packet.packet_id:02X} ({packet.length} bytes)")
-            if self.config["debug_packets"]:
-                self.log.debug(repr(packet))
+            self.log.debug(f"Received {str(packet)}" + (('\n' + repr(packet)) if self.config["debug_packets"] else ''))
 
             for (pid, matcher, fut) in self._waiters:
                 if pid == packet.packet_id:

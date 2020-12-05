@@ -304,11 +304,7 @@ class BnetClient:
             return False
 
         self.writer.write(packet.get_data())
-
-        self.log.debug(f"Sent packet 0x{packet.packet_id:02X} ({packet.length} bytes)")
-        if self.config["debug_packets"]:
-            self.log.debug(repr(packet))
-
+        self.log.debug(f"Sent {str(packet)}" + (('\n' + repr(packet)) if self.config["debug_packets"] else ''))
         await self.writer.drain()
         return True
 
@@ -320,9 +316,7 @@ class BnetClient:
             elif packet is False:
                 return self.disconnect("Invalid packet data received")
 
-            self.log.debug(f"Received packet 0x{packet.packet_id:02X} ({packet.length} bytes)")
-            if self.config["debug_packets"]:
-                self.log.debug(repr(packet))
+            self.log.debug(f"Received {str(packet)}" + (('\n' + repr(packet)) if self.config["debug_packets"] else ''))
 
             # First pass the packet to any listening callback (gives a chance to veto it)
             if self.recv_cb and (await self.recv_cb(self, packet.packet_id, packet) is True):
@@ -356,10 +350,10 @@ class BnetClient:
                         break
 
             if not found:
-                self.log.debug(f"Packet 0x{packet.packet_id:02X} was not handled")
+                self.log.warning(f"Packet 0x{packet.packet_id:02X} was not handled")
                 if not self.config["debug_packets"]:
                     # Only print the packet data again if we didn't before.
-                    self.log.debug(repr(packet))
+                    self.log.debug(f"{str(packet)}\n{repr(packet)}")
 
     async def authenticate(self, product=None, keys=None, timeout=5, **options):
         """
@@ -984,7 +978,7 @@ class BnetClient:
                 2: "NLSv2"
             }
             type_name = logon_types.get(logon_type, f"Unknown (0x{logon_type:08X})")
-            self.log.info(f"Server suggests {type_name} account login.")
+            self.log.info(f"Server requests {type_name} account login.")
 
             self.state["server_token"] = s_token = packet.get_dword()
             self.state["udp_token"] = u_token = packet.get_dword()
