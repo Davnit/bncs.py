@@ -16,6 +16,8 @@ log = logging.getLogger(__name__)
 HASH_CODES = [0xE7F4CB62, 0xF6A14FFC, 0xAA5504AF, 0x871FCDC2, 0x11BF6A18, 0xC57292E6, 0x7927D27E, 0x2FEC8733]
 FAST_FORMULAS = ["A=A.S", "B=B.C", "C=C.A", "A=A.B"]
 
+pe_structs = {}     # file path -> PE data
+
 
 class InvalidFormulaError(CheckRevisionFailedError):
     """Raised when the checksum formula could not be interpreted."""
@@ -37,17 +39,16 @@ def get_hashcode(mpq):
     """Returns the hash code (seed value?) for the specified MPQ filename."""
     num = 0
     if mpq.startswith("ver"):
-        num = ord(mpq[9]) - 0x30
+        num = int(mpq[9])
     elif "ver" in mpq:
-        num = ord(mpq[7]) - 0x30
+        num = int(mpq[7])
     return HASH_CODES[num]
 
 
-def get_file_version_and_info(file, skip_cache=False):
-    from .main import get_cached_pe_data, cache_pe_data
-    if (pe := get_cached_pe_data(file, skip_cache)) is None:
-        pe = pefile.PE(file)
-        cache_pe_data(file, pe)
+def get_file_version_and_info(file):
+    """Returns the version and 'exe information' values from an file."""
+    if (pe := pe_structs.get(file)) is None:
+        pe = pe_structs[file] = pefile.PE(file)
 
     # EXE Version
     ffi = pe.VS_FIXEDFILEINFO[0]
@@ -110,7 +111,7 @@ def check_version(formula, mpq, files):
 
     for file in files:
         with open(file, 'rb') as fh:
-            # TODO: Don't load the entire hash file into memory
+            # TODO: Don't load the entire hash file into memory at once
             data = fh.read()
 
         # For some MPQs, pad the file to 1024-byte intervals of descending byte values.

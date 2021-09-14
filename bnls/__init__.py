@@ -1,14 +1,6 @@
 
 from .client import BnlsClient
-
 from .packets import BnlsPacket, BnlsReader
-from .packets import BNLS_NULL, BNLS_CDKEY, BNLS_LOGONCHALLENGE, BNLS_LOGONPROOF, BNLS_CREATEACCOUNT
-from .packets import BNLS_CHANGECHALLENGE, BNLS_CHANGEPROOF, BNLS_UPGRADECHALLENGE, BNLS_UPGRADEPROOF
-from .packets import BNLS_VERSIONCHECK, BNLS_CONFIRMLOGON, BNLS_HASHDATA, BNLS_CDKEY_EX
-from .packets import BNLS_CHOOSENLSREVISION, BNLS_AUTHORIZE, BNLS_AUTHORIZEPROOF, BNLS_REQUESTVERSIONBYTE
-from .packets import BNLS_VERIFYSERVER, BNLS_RESERVESERVERSLOTS, BNLS_SERVERLOGONCHALLENGE, BNLS_SERVERLOGONPROOF
-from .packets import BNLS_VERSIONCHECKEX, BNLS_VERSIONCHECKEX2, BNLS_WARDEN, BNLS_IPBAN
+from .products import BnlsProduct
 
-from .products import BnlsProduct, PRODUCT_CODES
-
-from bncs.utils import DataBuffer, DataReader, EventDispatcher
+from . import packets

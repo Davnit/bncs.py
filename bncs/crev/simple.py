@@ -6,22 +6,34 @@ import struct
 import pefile
 from signify.signed_pe import SignedPEFile
 
+from .classic import pe_structs
 
-signature_cache = {}        # EXE signature public keys
+public_keys = {}
 
 
-def check_version(seed, exe, include_cert=False, skip_cache=False):
+def get_public_key(file):
+    if key := public_keys.get(file):
+        return key
+
+    with open(file, 'rb') as fh:
+        # The EXE must be digitally signed
+        pe = SignedPEFile(fh)
+        cert = list(pe.signed_datas)[0].certificates[0]
+
+        # signify library returns the public key as a binary (1/0) string
+        public_key = public_keys[file] = hex(int(str(cert.subject_public_key), 2))
+        return public_key
+
+
+def check_version(seed, exe, include_cert=False):
     """Performs the modern 'simple' version check using the exe version and optionally the certificate.
 
     seed: base64 encoded seed value provided by the server
     exe: path to the main game exe file
     include_cert: set to True to include the exe certificate in the hash
     """
-    global signature_cache
-    from .main import get_cached_pe_data, cache_pe_data
-    if (pe := get_cached_pe_data(exe, skip_cache)) is None:
-        pe = pefile.PE(exe)
-        cache_pe_data(exe, pe)
+    if (pe := pe_structs.get(exe)) is None:
+        pe = pe_structs[exe] = pefile.PE(exe)
 
     # Ex: '2001, 5, 18, 1'
     # This is different from the EXE version used in classic CRev
@@ -40,20 +52,9 @@ def check_version(seed, exe, include_cert=False, skip_cache=False):
 
     if include_cert:
         version = 6         # Static value for CheckRevisionD1.mpq
-
-        if skip_cache or exe.lower() not in signature_cache:
-            with open(exe, 'rb') as fh:
-                # The EXE must be digitally signed
-                file = SignedPEFile(fh)
-                cert = list(file.signed_datas)[0].certificates[0]
-
-                # signify library returns the public key as a binary (1/0) string
-                public_key = hex(int(str(cert.subject_public_key), 2))
-                signature_cache[exe.lower()] = public_key
-        else:
-            public_key = signature_cache[exe.lower()]
+        public_key = get_public_key(exe)
 
         # Combine the public key with the seed and append the encoded hash to the EXE info string
-        info += b":" + base64.b64encode(sha1(public_key + seed).digest())
+        info += b":" + base64.b64encode(sha1(public_key.encode('ascii') + seed).digest())
 
     return version, checksum, info

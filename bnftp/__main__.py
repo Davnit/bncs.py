@@ -64,13 +64,10 @@ async def main():
         sys.exit(1)
 
     if args.hash:
-        blocksize = 64 * 1000
         h = hashlib.md5()
         with open(saved_to, 'rb') as fh:
-            buf = fh.read(blocksize)
-            while len(buf) > 0:
+            while len(buf := fh.read(h.block_size * 1000)) > 0:
                 h.update(buf)
-                buf = fh.read(blocksize)
         log.info("MD5: %s", h.hexdigest())
 
 

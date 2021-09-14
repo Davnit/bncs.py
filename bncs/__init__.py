@@ -1,24 +1,14 @@
 
+from . import chat
 from . import crev
 from . import hashing
+from . import packets
 from . import utils
 
-from .packets import *
+from .chat import ChatUser, ChatEvent, ChatEventType, ChannelFlags, UserFlags
 
-from .client import BnetClient, ChatEvent
-
-# Chat event IDs
-from .chat import EID_SHOWUSER, EID_JOIN, EID_LEAVE, EID_WHISPER, EID_TALK, EID_BROADCAST, EID_CHANNEL, EID_USERFLAGS, \
-    EID_WHISPERSENT, EID_CHANNELFULL, EID_CHANNELDOESNOTEXIST, EID_CHANNELRESTRICTED, EID_INFO, EID_ERROR, \
-    EID_IGNORE, EID_ACCEPT, EID_EMOTE, ChatEventType
-
-# Channel flags
-from .chat import CHANNEL_PUBLIC, CHANNEL_MODERATED, CHANNEL_RESTRICTED, CHANNEL_SILENT, CHANNEL_SYSTEM, \
-    CHANNEL_PRODUCT, CHANNEL_GLOBAL, CHANNEL_REDIRECT, CHANNEL_CHAT, CHANNEL_SUPPORT, ChannelFlags
-
-# User flags
-from .chat import FLAG_BLIZZARD, FLAG_CHANOP, FLAG_CHANVOICE, FLAG_BNETADMIN, FLAG_NOUDP, FLAG_SQUELCH, FLAG_GUEST, \
-    UserFlags
+from .client import BnetClient, InvalidOperationError, ClientStatus, ClientAuthResult, AccountLoginResult, \
+    AccountCreateResult, LadderDataSorting, FriendStatus, FriendLocation
 
 from .products import BncsProduct, PRODUCT_STAR, PRODUCT_SEXP, PRODUCT_W2BN, PRODUCT_D2DV, PRODUCT_D2XP, \
     PRODUCT_JSTR, PRODUCT_WAR3, PRODUCT_W3XP, PRODUCT_DRTL, PRODUCT_DSHR, PRODUCT_SSHR, PRODUCT_W3DM, \

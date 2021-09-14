@@ -1,5 +1,5 @@
 
-from bncs.utils import PacketBuilder, PacketReader, DataBuffer, get_packet_name
+from bncs.utils import PacketBuilder, PacketReader, DataBuffer, get_packet_name, InvalidPacketException
 
 
 BOTNET_KEEPALIVE = 0x00
@@ -48,14 +48,13 @@ class BotNetPacket(PacketBuilder):
 
 
 class BotNetReader(PacketReader):
-    def __init__(self, data):
-        if len(data) < 4:
-            raise ValueError("Packet data must contain at least 4 bytes.")
+    HEADER_SIZE = 4
 
+    def __init__(self, data):
         super().__init__(data)
         proto_ver = self.get_byte()
         if proto_ver != 0x01:
-            raise ValueError("Invalid BotNet packet header. (Version: %i)" % proto_ver)
+            raise InvalidPacketException("Invalid BotNet packet header. (Version: %i)" % proto_ver)
 
         self.packet_id = self.get_byte()
         self.length = self.get_word()
@@ -68,3 +67,14 @@ class BotNetReader(PacketReader):
 
     def get_name(self):
         return get_packet_name(self, globals(), "BOTNET_")
+
+    @classmethod
+    async def read_from(cls, stream):
+        from asyncio import IncompleteReadError
+        try:
+            packet = cls(await stream.readexactly(4))
+        except IncompleteReadError:
+            return None
+
+        await packet.fill(stream)
+        return packet

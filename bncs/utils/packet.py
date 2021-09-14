@@ -1,5 +1,11 @@
 
+import abc
+
 from .buffer import DataBuffer, DataReader, format_buffer
+
+
+class InvalidPacketException(Exception):
+    pass
 
 
 def get_packet_name(packet, names, prefix=None):
@@ -9,12 +15,13 @@ def get_packet_name(packet, names, prefix=None):
                 return var
 
 
-class PacketBuilder(DataBuffer):
+class PacketBuilder(abc.ABC, DataBuffer):
     """Helper class for creating and writing packets."""
-    def __init__(self, packet_id):
+    def __init__(self, packet_id, data=None):
         """Creates a new packet with the specified ID."""
         self.packet_id = packet_id
-        super().__init__()
+        abc.ABC.__init__(self)
+        DataBuffer.__init__(self, data)
 
     @property
     def length(self):
@@ -28,20 +35,28 @@ class PacketBuilder(DataBuffer):
     def __repr__(self):
         return format_buffer(self.get_data())
 
+    @abc.abstractmethod
     def get_name(self):
         """Returns the name of the packet."""
         pass
 
+    @abc.abstractmethod
     def get_data(self):
         """Returns the full packet data including the header."""
         pass
 
 
-class PacketReader(DataReader):
+class PacketReader(abc.ABC, DataReader):
     """Helper class for receiving and reading packets."""
+    HEADER_SIZE = 0
+
     def __init__(self, data=None):
         """Creates a new reader for a packet with the given data."""
-        super().__init__(data)
+        abc.ABC.__init__(self)
+        DataReader.__init__(self, data)
+
+        if len(data) < self.HEADER_SIZE:
+            raise ValueError(f"{type(self).__name__} data must be at least {self.HEADER_SIZE} bytes")
 
         self.packet_id = None
         self.length = len(data)
@@ -60,6 +75,7 @@ class PacketReader(DataReader):
     def __repr__(self):
         return format_buffer(self.data)
 
+    @abc.abstractmethod
     def get_name(self):
         """Returns the name of the packet."""
         pass
@@ -83,19 +99,18 @@ class PacketReader(DataReader):
         self.data += data
         return self.is_full_packet()
 
-    async def fill(self, reader):
-        """Reads the remaining packet data from an asyncio StreamReader instance.
+    def reset(self):
+        """Resets the reader position to the start of the packet data."""
+        self.position = self.HEADER_SIZE
 
-            This method should only be called AFTER the packet header is read. Returns success.
-        """
-        from asyncio import IncompleteReadError
+    @classmethod
+    @abc.abstractmethod
+    async def read_from(cls, stream):
+        """Reads a full packet from the stream"""
+        pass
 
+    async def fill(self, stream):
+        """Reads the remaining packet data from a stream."""
         if not self.is_full_packet():
-            try:
-                self.append(await reader.readexactly(self.missing))
-            except IncompleteReadError as ire:
-                self.append(ire.partial)
-                return False
-
-        return True
+            self.append(await stream.readexactly(self.missing))
 

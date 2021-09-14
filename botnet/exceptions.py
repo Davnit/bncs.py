@@ -4,17 +4,9 @@ from .packets import BOTNET_USER_LIST, BOTNET_COMMAND_TO_ALL, BOTNET_COMMAND_TO,
 from .packets import BOTNET_CLIENT_VERSION, BOTNET_CHAT, BOTNET_ADMIN, BOTNET_ACCOUNT
 
 
-class BotNetError(BaseException):
+class BotNetError(Exception):
     """Indicates an error of the BotNet protocol."""
     pass
-
-
-class BotNetUnsupportedRevision(BotNetError):
-    """Indicates that an operation was attempted that is unsupported on the current server revision."""
-    def __init__(self, current, required):
-        self.current = current
-        self.required = required
-        super().__init__("Operation not supported on server revision %i - requires: %s" % (current, required))
 
 
 PROTOCOL_VIOLATION_ERRORS = {

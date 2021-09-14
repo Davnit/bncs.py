@@ -101,6 +101,12 @@ class KeyDecoder(ABC):
         - Returns True if the key was successfully decoded."""
         return False
 
+    @classmethod
+    @abstractmethod
+    def encode(cls, product, public, private):
+        """Encodes a key from existing product, public, and private values."""
+        pass
+
     @abstractmethod
     def get_hash(self, client_token, server_token):
         """Returns the 20-byte hash sent to the server to verify the key.
@@ -124,7 +130,7 @@ class KeyDecoder(ABC):
     def get_product_code(self):
         """Returns the 4-digit product code the key is associated with."""
         pk = self._get_lookup_key()
-        return products[pk][1] if pk in products else ''
+        return products[pk][1] if pk in products else '????'
 
     def _preset(self, product, public, private):
         self.product = product
@@ -388,6 +394,9 @@ class W3KeyDecoder(KeyDecoder):
 
     @classmethod
     def encode(cls, product, public, private):
+        if isinstance(private, int):
+            private = private.to_bytes(10, 'little')
+
         bb = [0] * 15
         for i in range(0, 10):
             bb[cls.ORDER[i]] = private[i]

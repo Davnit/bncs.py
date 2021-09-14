@@ -24,6 +24,14 @@ class AdminFlags:
         """Returns True if a flag is set."""
         return f in self.to_flag_string()
 
+    def has_any_flag(self, flags=None):
+        """Returns True if any given flag is set"""
+        if flags:
+            f_str = self.to_flag_string()
+            return any(f for f in flags if f in f_str)
+        else:
+            return self.value > 0
+
     def set_flags(self, flags):
         """Overwrites all flags."""
         bits = ["0"] * 26

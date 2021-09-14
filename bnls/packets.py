@@ -55,10 +55,9 @@ class BnlsPacket(PacketBuilder):
 
 
 class BnlsReader(PacketReader):
-    def __init__(self, data):
-        if len(data) < 3:
-            raise ValueError("Packet data must contain at least 3 bytes.")
+    HEADER_SIZE = 3
 
+    def __init__(self, data):
         super().__init__(data)
         self.length = self.get_word()
         self.packet_id = self.get_byte()

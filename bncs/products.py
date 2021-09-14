@@ -120,4 +120,7 @@ class BncsProduct:
                 if prod.get_product_dword() == pid or prod.bnls_id == pid:
                     return prod
 
+        elif isinstance(pid, BncsProduct):
+            return pid
+
         return None

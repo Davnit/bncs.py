@@ -1,5 +1,5 @@
 
-from bncs.utils import PacketBuilder, PacketReader, DataBuffer, get_packet_name
+from bncs.utils import PacketBuilder, PacketReader, DataBuffer, get_packet_name, InvalidPacketException
 
 
 # Packet constants
@@ -139,13 +139,13 @@ class BncsPacket(PacketBuilder):
 
 
 class BncsReader(PacketReader):
-    def __init__(self, data):
-        if len(data) < 4:
-            raise ValueError("Packet data must contain at least 4 bytes.")
+    HEADER_SIZE = 4
 
+    def __init__(self, data):
         super().__init__(data)
+
         if self.get_byte() != 0xFF:
-            raise ValueError("Invalid BNCS packet header")
+            raise InvalidPacketException("Invalid packet header (expected 0xff)", data)
 
         self.packet_id = self.get_byte()
         self.length = self.get_word()
@@ -161,14 +161,6 @@ class BncsReader(PacketReader):
 
     @classmethod
     async def read_from(cls, reader):
-        from asyncio import IncompleteReadError
-
-        try:
-            packet = cls(await reader.readexactly(4))
-        except IncompleteReadError:
-            return None     # Not enough data was available
-        except ValueError:
-            return False    # Packet data is invalid
-
+        packet = cls(await reader.readexactly(4))
         await packet.fill(reader)
         return packet

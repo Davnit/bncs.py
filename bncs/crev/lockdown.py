@@ -2,6 +2,7 @@
 from os import path
 import struct
 
+from .classic import pe_structs
 from ..hashing.bsha import lockdown_sha1
 
 import pefile
@@ -13,8 +14,27 @@ SEEDS = [
     0xD723C016, 0xFD545590, 0xFB600C2E, 0x684C8785, 0x58BEDE0B
 ]
 
+heap_data = {}
 
-file_heaps = {}
+
+def build_heap(file):
+    if (pe := pe_structs.get(file)) is None:
+        pe = pe_structs[file] = pefile.PE(file)
+
+    if (heap := heap_data.get(file)) is None:
+        heap = LockdownHeap()
+        if pe.has_relocs():
+            # noinspection PyTypeChecker
+            process_reloc(pe, heap)
+
+        # noinspection PyTypeChecker
+        process_import(pe, heap)
+
+        # Sort the heap and store it in the cache
+        heap.sort()
+        heap_data[file] = heap
+
+    return heap, pe
 
 
 def shuffle_seed(seed):
@@ -95,14 +115,8 @@ def pad_ldsha(ctx, amount):
         amount -= count
 
 
-def hash_file(ctx, file_path, library, skip_cache=False):
-    global file_heaps
-    from .main import get_cached_pe_data, cache_pe_data
-
-    print("Processing file: %s" % path.basename(file_path))
-    if (pe := get_cached_pe_data(file_path, skip_cache)) is None:
-        pe = pefile.PE(file_path)
-        cache_pe_data(file_path, pe)
+def hash_file(ctx, file_path, library):
+    heap, pe = build_heap(file_path)
 
     # Get the size of the PE header and hash all bytes of the file up to that
     header = pe.OPTIONAL_HEADER
@@ -110,22 +124,7 @@ def hash_file(ctx, file_path, library, skip_cache=False):
     ctx.update(pe.get_data(0, header_size))
     # print("PE header: " + ctx.debug())
 
-    library_number = int(path.basename(library).split('-')[2][:2])
-    seed = SEEDS[library_number]
-
-    heap = file_heaps.get(file_path.lower())
-    if heap is None:
-        heap = LockdownHeap()
-        if pe.has_relocs():
-            # noinspection PyTypeChecker
-            process_reloc(pe, heap)
-
-        # noinspection PyTypeChecker
-        process_import(pe, heap)
-
-        # Sort the heap and store it in the cache
-        heap.sort()
-        file_heaps[file_path.lower()] = heap
+    seed = SEEDS[int(path.basename(library).split('-')[2][:2])]
 
     for section in pe.sections:
         hash1(ctx, heap, pe, section, seed)
@@ -250,9 +249,17 @@ def process_import(pe, heap):
         address += 0x14
 
 
-def check_version(archive, seed, files, skip_cache=False):
-    exe = files[0]
-    library = files[4]
+def check_version(seed, files):
+    # We need at least 3 files to do this: exe, mem dump, library
+    if len(files) < 3:
+        raise ValueError("Not enough files to complete Lockdown CheckRevision")
+
+    library = files.pop()       # files[4] == archive 'lockdown-XXXX-YY.mpq'
+    memdump = files.pop()       # files[3] == bin 'ZZZZ.bin'
+
+    if (not library.startswith("lockdown-") or not library.endswith(".mpq")) or \
+            (len(memdump) != 8 or not memdump.endswith(".bin")):
+        raise ValueError("Invalid files passed to Lockdown CheckRevision. Screen dump and library must come last.")
 
     ctx = lockdown_sha1()
 
@@ -266,12 +273,12 @@ def check_version(archive, seed, files, skip_cache=False):
     ctx.update(vs_buffer_1)
 
     # Process and hash files
-    hash_file(ctx, library, library, skip_cache)        # Hash the lockdown library itself
-    for i in range(3):
-        hash_file(ctx, files[i], library, skip_cache)   # Hash the actual game files (exe, storm, snp)
+    hash_file(ctx, library, library)        # Hash the lockdown library itself
+    for file in files:
+        hash_file(ctx, file, library)       # Hash the actual game files (exe, storm, snp)
 
     # Hash the game's video memory dump (not created at runtime)
-    with open(files[3], 'rb') as fh:
+    with open(memdump, 'rb') as fh:
         ctx.update(fh.read())
 
     ctx.update(b'\x01\x00\x00\x00')

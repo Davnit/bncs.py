@@ -30,13 +30,30 @@ PRODUCT_CODES = {
     "W3DM": PRODUCT_WAR3DEMO
 }
 
+PRODUCT_IDS = {v: k for k, v in PRODUCT_CODES.items()}
+
 
 class BnlsProduct:
     def __init__(self, code):
-        self.code = code.upper()
-        self.bnls_id = PRODUCT_CODES.get(self.code)
+        if isinstance(code, int):
+            self.bnls_id = code
+            self.code = PRODUCT_IDS.get(self.bnls_id)
+        elif isinstance(code, str):
+            self.code = code.upper()
+            self.bnls_id = PRODUCT_CODES.get(self.code)
+        else:
+            raise TypeError("BNLS product code must be int or str")
+
         self.check = None           # bncs.crev.CheckRevisionResults object
         self.verbyte = None
 
     def __str__(self):
         return "BNLS Product '%s'" % self.code
+
+    @staticmethod
+    def product_codes():
+        return PRODUCT_CODES
+
+    @staticmethod
+    def product_ids():
+        return PRODUCT_IDS
