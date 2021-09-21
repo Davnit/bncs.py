@@ -11,7 +11,7 @@ setup(
     author_email='david@davnit.net',
     url='https://github.com/Davnit/bncs.py',
     packages=find_packages(),
-    install_requires=['pefile', 'signify'],
+    install_requires=['pefile', 'signify', 'Pillow'],
     package_data={
         ".": ["products.json"]
     },

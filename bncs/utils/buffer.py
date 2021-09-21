@@ -34,6 +34,12 @@ def make_dword(v):
         raise TypeError("DWORD must be a string with at most 4 characters.")
 
 
+def unmake_dword(v):
+    """ Converts an int DWORD value to a string """
+    buff = pack('<I', v)
+    return buff[::-1].decode('ascii')
+
+
 def format_buffer(data):
     """ Formats binary data in a human-friendly manner. """
     if len(data) == 0:
