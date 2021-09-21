@@ -13,3 +13,5 @@ from .client import BnetClient, InvalidOperationError, ClientStatus, ClientAuthR
 from .products import BncsProduct, PRODUCT_STAR, PRODUCT_SEXP, PRODUCT_W2BN, PRODUCT_D2DV, PRODUCT_D2XP, \
     PRODUCT_JSTR, PRODUCT_WAR3, PRODUCT_W3XP, PRODUCT_DRTL, PRODUCT_DSHR, PRODUCT_SSHR, PRODUCT_W3DM, \
     PRODUCT_CHAT, supported_products, LogonMechanism
+
+from .queue import CreditQueue
