@@ -1,9 +1,11 @@
 
-from struct import unpack
+from hashlib import sha1
+from os import path
+from struct import pack, unpack
 import sys
 from tempfile import TemporaryFile
 
-from utils import unmake_dword
+from utils import make_dword, unmake_dword
 
 from PIL import Image as ImageProc
 
@@ -73,6 +75,46 @@ class BnetIconFile:
 
                 self.icons.append(icon)
 
+    def save(self, dest=None):
+        """Writes the BNI data to 'dest'. If dest is None, the current path will be used."""
+        if dest is None:
+            dest = self.path
+
+        with open(dest, 'wb') as fh:
+            # BNI Header
+            fh.write(pack('<I', 16))
+            fh.write(pack('<HHII', self.version, 0, self.count, self.offset))
+
+            # Parameters for the final image data
+            width = max(icon.width for icon in self.icons)
+            height = sum(icon.height for icon in self.icons)
+            image = ImageProc.new("RGB", (width, height))
+            top = 0
+
+            for icon in self.icons:
+                # Icon metadata
+                fh.write(pack('<III', icon.flags, icon.width, icon.height))
+                if icon.flags == 0:
+                    for idx, code in enumerate(icon.codes):
+                        if idx > 32:
+                            # 32 code entries max
+                            break
+                        fh.write(pack('<I', make_dword(code)))
+                fh.write(pack('<I', 0))
+
+                if icon.image:
+                    # Add the icon's image data to the final image
+                    image.paste(icon.image, (0, top, icon.width, top + icon.height))
+
+                # Count the height of the icon even if we don't have image data
+                top += icon.height
+
+            # Save the Targa image data to a temporary file and then copy it onto the end of the BNI
+            with TemporaryFile() as temp:
+                image.save(temp, 'TGA', rle=True)
+                temp.seek(0)
+                fh.write(temp.read(-1))
+
     def open_image(self):
         """Reads the image data and crops out individual icons"""
         with TemporaryFile() as temp:
@@ -105,6 +147,14 @@ class BnetIconFile:
             yield icon, name
 
 
+def hash_file(fp):
+    ctx = sha1()
+    with open(fp, 'rb') as fh:
+        while data := fh.read(ctx.block_size * 1024):
+            ctx.update(data)
+    return ctx
+
+
 def main():
     fp = sys.argv[1]
     file = BnetIconFile.load(fp)
@@ -125,6 +175,15 @@ def main():
     for _, name in file.extract_icons():
         print(f"\tSaved icon #{counter} to '{name}'")
         counter += 1
+
+    print("Saving duplicate file...")
+    fname, ext = path.splitext(fp)
+    new_file = fname + "2" + ext
+    file.save(new_file)
+
+    print("Comparing hashes...")
+    print("\tOriginal:", hash_file(fp).hexdigest())
+    print("\t    Copy:", hash_file(new_file).hexdigest())
 
 
 if __name__ == "__main__":
