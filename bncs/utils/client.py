@@ -41,13 +41,12 @@ class AsyncClientBase(abc.ABC):
     async def connect(self, host, port):
         """Opens a connection to the remote server."""
         if not isinstance(host, str) or not isinstance(port, int):
-            self.log.error("Connection failed - invalid endpoint")
-            return False
+            raise ValueError("invalid remote endpoint - host must be str and port must be int", (host, port))
 
         # Open the connection
         self.log.info(f"Connecting to '{host}' on port {port}...")
         self._reader, self._writer = \
-            await asyncio.open_connection(host, port, family=socket.AF_INET)      # IPv4 only
+            await asyncio.open_connection(host, port, family=socket.AF_INET)      # BNET only supports IPv4
         self.state["remote_ip"] = self._writer.get_extra_info('peername')[0]
         self.state["local_ip"] = self._writer.get_extra_info('sockname')[0]
 
@@ -59,7 +58,7 @@ class AsyncClientBase(abc.ABC):
         loop = asyncio.get_event_loop()
         self._receiver = loop.create_task(self.receive(), name=f"{type(self).__name__} packet receiver")
         self._keep_alive = loop.create_task(self.keep_alive(), name=f"{type(self).__name__} keep-alive")
-        return self._connected
+        return True
 
     def disconnect(self, reason=None):
         """Closes the connection"""
