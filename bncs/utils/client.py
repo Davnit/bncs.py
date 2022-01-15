@@ -27,6 +27,13 @@ class AsyncClientBase(abc.ABC):
         self._receiver = self._keep_alive = None            # tasks for receiving data and sending keep-alive messages
         self._waiters = []                                  # asyncio Futures waiting for specific packets
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, exc_tb):
+        if self.connected:
+            self.disconnect("exception occurred" if exc_type else "context exit")
+
     @property
     def connected(self):
         return self._connected
