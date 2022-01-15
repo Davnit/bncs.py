@@ -34,11 +34,7 @@ BNLS_IPBAN = 0xFF
 
 
 class BnlsPacket(PacketBuilder):
-    def __init__(self, packet_id):
-        super().__init__(packet_id)
-
-    def __len__(self):
-        return super().__len__() + 3
+    HEADER_SIZE = 3
 
     def __str__(self):
         return "BNLS " + super().__str__()
@@ -62,23 +58,8 @@ class BnlsReader(PacketReader):
         self.length = self.get_word()
         self.packet_id = self.get_byte()
 
-    def __len__(self):
-        return self.length
-
     def __str__(self):
         return "BNLS " + super().__str__()
 
     def get_name(self):
         return get_packet_name(self, globals(), "BNLS_")
-
-    @classmethod
-    async def read_from(cls, reader):
-        from asyncio import IncompleteReadError
-
-        try:
-            packet = BnlsReader(await reader.readexactly(3))
-        except IncompleteReadError:
-            return None
-
-        await packet.fill(reader)
-        return packet

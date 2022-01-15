@@ -26,11 +26,7 @@ BOTNET_CHAT_OPTIONS = 0x10
 
 
 class BotNetPacket(PacketBuilder):
-    def __init__(self, packet_id):
-        super().__init__(packet_id)
-
-    def __len__(self):
-        return super().__len__() + 4
+    HEADER_SIZE = 4
 
     def __str__(self):
         return "BotNet " + super().__str__()
@@ -59,22 +55,8 @@ class BotNetReader(PacketReader):
         self.packet_id = self.get_byte()
         self.length = self.get_word()
 
-    def __len__(self):
-        return self.length
-
     def __str__(self):
         return "BotNet " + super().__str__()
 
     def get_name(self):
         return get_packet_name(self, globals(), "BOTNET_")
-
-    @classmethod
-    async def read_from(cls, stream):
-        from asyncio import IncompleteReadError
-        try:
-            packet = cls(await stream.readexactly(4))
-        except IncompleteReadError:
-            return None
-
-        await packet.fill(stream)
-        return packet

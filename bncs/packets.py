@@ -113,15 +113,7 @@ SID_CLANMEMBERINFORMATION       = 0x82
 
 
 class BncsPacket(PacketBuilder):
-    def __init__(self, packet_id):
-        super().__init__(packet_id)
-
-    @property
-    def length(self):
-        return self.__len__()
-
-    def __len__(self):
-        return super().__len__() + 4
+    HEADER_SIZE = 4
 
     def __str__(self):
         return "BNCS " + super().__str__()
@@ -150,17 +142,8 @@ class BncsReader(PacketReader):
         self.packet_id = self.get_byte()
         self.length = self.get_word()
 
-    def __len__(self):
-        return self.length
-
     def __str__(self):
         return "BNCS " + super().__str__()
 
     def get_name(self):
         return get_packet_name(self, globals(), "SID_")
-
-    @classmethod
-    async def read_from(cls, reader):
-        packet = cls(await reader.readexactly(4))
-        await packet.fill(reader)
-        return packet

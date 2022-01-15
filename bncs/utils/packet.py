@@ -17,6 +17,8 @@ def get_packet_name(packet, names, prefix=None):
 
 class PacketBuilder(abc.ABC, DataBuffer):
     """Helper class for creating and writing packets."""
+    HEADER_SIZE = 0
+
     def __init__(self, packet_id, data=None):
         """Creates a new packet with the specified ID."""
         self.packet_id = packet_id
@@ -25,7 +27,10 @@ class PacketBuilder(abc.ABC, DataBuffer):
 
     @property
     def length(self):
-        return super().__len__()
+        return len(self)
+
+    def __len__(self):
+        return super().__len__() + self.HEADER_SIZE
 
     def __str__(self):
         if str_id := self.get_name():
@@ -82,7 +87,7 @@ class PacketReader(abc.ABC, DataReader):
 
     @property
     def data_len(self):
-        """The actual number of bytes in the packet."""
+        """The actual length of the data in the buffer."""
         return super().__len__()
 
     @property
@@ -104,10 +109,17 @@ class PacketReader(abc.ABC, DataReader):
         self.position = self.HEADER_SIZE
 
     @classmethod
-    @abc.abstractmethod
     async def read_from(cls, stream):
         """Reads a full packet from the stream"""
-        pass
+        from asyncio import IncompleteReadError
+
+        try:
+            packet = cls(await stream.readexactly(cls.HEADER_SIZE))
+        except IncompleteReadError:
+            return None
+
+        await packet.fill(stream)
+        return packet
 
     async def fill(self, stream):
         """Reads the remaining packet data from a stream."""
