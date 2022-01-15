@@ -11,10 +11,12 @@ class CheckRevisionResults:
         self.info = None
 
     def __str__(self):
+        from .main import format_crev_seed
+
         if self.success:
             return "CRev Results:%s version: %s, checksum: %.8x, info: %s" % \
                    ((" %s -" % self.product) if self.product else "",
-                    self.get_version_string(), self.checksum, self.info)
+                    self.get_version_string(), self.checksum, format_crev_seed(self.info))
         else:
             return "CRev Results:%s version check failed" % (" %s -" % self.product) if self.product else ""
 
