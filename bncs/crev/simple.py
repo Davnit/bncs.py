@@ -4,7 +4,7 @@ from hashlib import sha1
 import struct
 
 import pefile
-from signify.signed_pe import SignedPEFile
+from signify.authenticode import SignedPEFile
 
 from .classic import pe_structs
 
