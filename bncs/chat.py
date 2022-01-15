@@ -172,6 +172,10 @@ class ChatEvent:
         event.regauth = packet.get_dword()
         event.username = packet.get_string()
 
+        # If ping is max value, set it to -1
+        if event.ping == 0xffffffff:
+            event.ping = -1
+
         # The text field can have mixed encodings depending on context
         event.text = packet.get_string(encoding=None)
         if event.eid not in [ChatEventType.ShowUser, ChatEventType.UserJoin, ChatEventType.UserLeave,
