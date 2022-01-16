@@ -51,10 +51,11 @@ def load_product_metadata(source):
     for code, meta in products.items():
         product = BncsProduct(code, meta["name"])
         product.bnls_id = meta.get("bnls_id")
-        product.required_keys = meta.get("required_keys", [])
+        product.required_keys = meta.get("required_keys", product.required_keys)
         product.home_channel = meta.get("first_join_channel", product.home_channel)
-        product.home_flags = meta.get("first_join_flags", 1)
-        product.uses_udp = meta.get("udp", False)
+        product.home_flags = meta.get("first_join_flags", product.home_flags)
+        product.uses_udp = meta.get("udp", product.uses_udp)
+        product.hashes = meta.get("hashes", product.hashes)
 
         logon = meta.get("logon_mechanism", LogonMechanism.NoLogin)
         for mechanism, values in _logon_mechanism_values.items():
@@ -66,16 +67,19 @@ def load_product_metadata(source):
 
 
 class BncsProduct:
+    all_products = supported_products
+
     def __init__(self, code, full_name):
         self.code = code.upper()
         self.name = full_name
 
-        self.bnls_id = None
-        self.required_keys = []
-        self.logon_mechanism = None
-        self.home_channel = full_name.split(":")[0]
-        self.home_flags = 1
-        self.uses_udp = False
+        self.bnls_id = None                             # ID used with BNLS
+        self.required_keys = []                         # 4-char product codes of required CD keys
+        self.logon_mechanism = None                     # Logon method used by the official client
+        self.home_channel = full_name.split(":")[0]     # String used as channel name for first-joining chat
+        self.home_flags = 1                             # Flags used when first-joining chat
+        self.uses_udp = False                           # True if a UDP test should be performed
+        self.hashes = {}                                # Maps platform to a list of filenames used for hashing
 
     def __eq__(self, other):
         return isinstance(other, BncsProduct) and other.code == self.code

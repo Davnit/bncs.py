@@ -9,7 +9,13 @@
             "first_join_channel": "StarCraft",
             "first_join_flags": 1,
             "bnls_id": 1,
-            "udp": true
+            "udp": true,
+            "hashes": {
+                "IX86": [
+                    "StarCraft.exe",
+                    "storm.dll"
+                ]
+            }
         },
         "SEXP": {
             "name": "StarCraft: Brood War",
@@ -20,7 +26,13 @@
             "first_join_channel": "Brood War",
             "first_join_flags": 1,
             "bnls_id": 2,
-            "udp": true
+            "udp": true,
+            "hashes": {
+                "IX86": [
+                    "StarCraft.exe",
+                    "storm.dll"
+                ]
+            }
         },
         "W2BN": {
             "name": "WarCraft II: Battle.net Edition",
@@ -31,7 +43,14 @@
             "first_join_channel": "WarCraft II",
             "first_join_flags": 1,
             "bnls_id": 3,
-            "udp": true
+            "udp": true,
+            "hashes": {
+                "IX86": [
+                    "Warcraft II BNE.exe",
+                    "storm.dll",
+                    "battle.snp"
+                ]
+            }
         },
         "D2DV": {
             "name": "Diablo II",
@@ -42,7 +61,12 @@
             "first_join_channel": "Diablo II",
             "first_join_flags": 5,
             "bnls_id": 4,
-            "udp": false
+            "udp": false,
+            "hashes": {
+                "IX86": [
+                    "Game.exe"
+                ]
+            }
         },
         "D2XP": {
             "name": "Diablo II: Lord of Destruction",
@@ -54,7 +78,12 @@
             "first_join_channel": "Diablo II",
             "first_join_flags": 5,
             "bnls_id": 5,
-            "udp": false
+            "udp": false,
+            "hashes": {
+                "IX86": [
+                    "Game.exe"
+                ]
+            }
         },
         "JSTR": {
             "name": "Japanese StarCraft",
@@ -65,7 +94,14 @@
             "first_join_channel": "StarCraft",
             "first_join_flags": 1,
             "bnls_id": 6,
-            "udp": true
+            "udp": true,
+            "hashes": {
+                "IX86": [
+                    "StarCraftJ.exe",
+                    "storm.dll",
+                    "battle.snp"
+                ]
+            }
         },
         "WAR3": {
             "name": "WarCraft III: Reign of Chaos",
@@ -76,7 +112,12 @@
             "first_join_channel": "W3",
             "first_join_flags": 1,
             "bnls_id": 7,
-            "udp": false
+            "udp": false,
+            "hashes": {
+                "IX86": [
+                    "Warcraft III.exe"
+                ]
+            }
         },
         "W3XP": {
             "name": "WarCraft III: The Frozen Throne",
@@ -88,7 +129,12 @@
             "first_join_channel": "W3",
             "first_join_flags": 1,
             "bnls_id": 8,
-            "udp": false
+            "udp": false,
+            "hashes": {
+                "IX86": [
+                    "Warcraft III.exe"
+                ]
+            }
         },
         "DRTL": {
             "name": "Diablo Retail",
@@ -97,7 +143,14 @@
             "first_join_channel": "Diablo Retail",
             "first_join_flags": 1,
             "bnls_id": 9,
-            "udp": true
+            "udp": true,
+            "hashes": {
+                "IX86": [
+                    "Diablo.exe",
+                    "Storm.dll",
+                    "Battle.snp"
+                ]
+            }
         },
         "DSHR": {
             "name": "Diablo Shareware",
@@ -106,7 +159,14 @@
             "first_join_channel": "Diablo Shareware",
             "first_join_flags": 1,
             "bnls_id": 10,
-            "udp": true
+            "udp": true,
+            "hashes": {
+                "IX86": [
+                    "Diablo_s.exe",
+                    "Storm.dll",
+                    "Battle.snp"
+                ]
+            }
         },
         "SSHR": {
             "name": "StarCraft Shareware",
@@ -115,7 +175,14 @@
             "first_join_channel": "StarCraft",
             "first_join_flags": 1,
             "bnls_id": 11,
-            "udp": true
+            "udp": true,
+            "hashes": {
+                "IX86": [
+                    "Starcraft.exe",
+                    "storm.dll",
+                    "battle.snp"
+                ]
+            }
         },
         "W3DM": {
             "name": "WarCraft III Demo",

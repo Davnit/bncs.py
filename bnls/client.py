@@ -13,12 +13,12 @@ from bncs.utils import AsyncClientBase
 
 
 class BnlsClient(AsyncClientBase):
-    def __init__(self, *, logger=None, config=None):
+    def __init__(self, server=None, *, logger=None, **config):
         logger = logger or logging.getLogger("BNLS")
         AsyncClientBase.__init__(self, BnlsReader, logger=logger)
 
         self.config = {
-            "server": "jbls.davnit.net",
+            "server": server or "jbls.davnit.net",
             "port": 9367,
             "keep_alive_interval": 45
         }
@@ -124,10 +124,11 @@ class BnlsClient(AsyncClientBase):
         self._authorized = (status == 0)
         return self.authorized
 
-    async def request_version_byte(self, product, timeout=5):
+    async def get_version_byte(self, product, platform=None, timeout=5):
         """ Requests the version byte for a product.
 
         product: the 4-character product code (ex: SEXP)
+        platform: the 4-character platform code (ex: IX86) - ignored
 
         Returns the version byte of the requested product.
 
@@ -160,7 +161,7 @@ class BnlsClient(AsyncClientBase):
                     data.code = data.bnls_id
             return data.verbyte
 
-    async def check_version(self, product, archive, formula, timestamp=0, flags=0, timeout=30):
+    async def check_version(self, product, archive, formula, timestamp=0, flags=0, timeout=10):
         """ Requests a version check for a product.
 
         product: the 4-character product code (ex: SEXP)
@@ -218,12 +219,12 @@ class BnlsClient(AsyncClientBase):
 
             if data.bnls_id not in self.products:
                 self.products[data.bnls_id] = data
-            return data
+            return results
         else:
             # Server returned failure code or didn't return at all
             return None
 
-    async def hash_data(self, data, client_token=None, server_token=None, flags=4, timeout=1):
+    async def hash_data(self, data, client_token=None, server_token=None, flags=4, timeout=5):
         """Requests the Broken-SHA1 (XSha) hash of some data.
 
         data: a byte array containing the data to be hashed
@@ -280,7 +281,7 @@ class BnlsClient(AsyncClientBase):
 
         return reply.get_raw(20)
 
-    async def verify_server(self, server_ip, signature):
+    async def verify_server(self, server_ip, signature, timeout=5):
         """Verifies a WarCraft 3 server signature.
 
         server_ip: the packed int version of the server's IP address, or a str of the same in dot-notation (IPv4 only!)
@@ -302,7 +303,7 @@ class BnlsClient(AsyncClientBase):
 
         async with self._get_packet_lock(x11.packet_id):
             await self.send(x11)
-            reply = await self.wait_for_packet(BNLS_VERIFYSERVER)
+            reply = await self.wait_for_packet(BNLS_VERIFYSERVER, timeout=timeout)
 
         return reply.get_dword() == 1
 

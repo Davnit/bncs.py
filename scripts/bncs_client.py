@@ -4,19 +4,10 @@ import asyncio
 from datetime import datetime
 import logging
 
-from bncs import BnetClient, AccountLoginResult, ChatEventType, ClientStatus
-from bnls import BnlsClient
+from bncs import BnetClient, ChatEventType, ClientStatus, LocalHashingProvider, BncsProduct
 
 
 class SampleBnetClient(BnetClient):
-    async def do_login(self):
-        if await self.authenticate(timeout=10):
-            if await self.login() == AccountLoginResult.NoAccount:
-                if not await self.create_account() and await self.login():
-                    return
-            if self.status == ClientStatus.LoggedIn:
-                await self.enter_chat()
-
     async def _handle_chat_event(self, packet):
         event = await super()._handle_chat_event(packet)
 
@@ -39,18 +30,29 @@ async def main(args):
         "keys": args.keys.split(',') if args.keys else []
     }
 
-    bnls = BnlsClient()
-    client = SampleBnetClient(bnls_client=bnls, config=config)
+    client = SampleBnetClient(**config)
+    if args.hashes:
+        platform = client.config["platform"]
+        product = BncsProduct.get(args.product)
+        our_key = (platform, product.code)
+        files = {
+            our_key: product.hashes[platform]
+        }
+
+        # By only loading the hash files for our platform+product, we don't waste time loading stuff we don't need.
+        client.hashing_provider = LocalHashingProvider(args.hashes, files)
+        await client.hashing_provider.preload([our_key], True)
+
+    await client.hashing_provider.connect()
 
     def get_user_input():
         return input()
 
     try:
-        await client.connect()
-        await bnls.connect()
+        await client.full_connect_and_join()
 
-        await client.do_login()
-        bnls.disconnect("Done")
+        if hasattr(client.hashing_provider, 'connected'):
+            client.hashing_provider.disconnect("done")
 
         if client.status == ClientStatus.Chatting:
             while client.connected:
@@ -113,10 +115,14 @@ async def main(args):
                 if not is_local_cmd:
                     await client.send_command(raw_input)
     finally:
-        client.disconnect("dead")
-        bnls.disconnect("dead")
-        await client.wait_closed()
-        await bnls.wait_closed()
+        if client and client.connected:
+            client.disconnect("dead")
+            await client.wait_closed()
+
+        if client.hashing_provider and hasattr(client.hashing_provider, 'connected') \
+                and client.hashing_provider.connected:
+            client.hashing_provider.disconnect("dead")
+            await client.hashing_provider.wait_closed()
 
 
 if __name__ == "__main__":
@@ -128,6 +134,11 @@ if __name__ == "__main__":
     parser.add_argument("--server", help="Hostname or IP of the Battle.net server", default='useast.battle.net')
     parser.add_argument("--product", help="4-digit code of the game to emulate (ex: WAR3, SEXP)", default='DRTL')
     parser.add_argument("--keys", help="Comma separated list of CD keys for the emulated product")
+    parser.add_argument("--hashes", help="Path to directory containing game hash files")
 
     aa = parser.parse_args()
-    asyncio.run(main(aa))
+
+    try:
+        asyncio.run(main(aa))
+    except KeyboardInterrupt:
+        pass

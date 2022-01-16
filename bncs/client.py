@@ -8,14 +8,17 @@ import socket
 import struct
 
 from .chat import ChatEvent, ChatUser, ChatEventType
-from .crev import format_crev_formula
+from .crev import format_crev_seed, LocalHashingProvider
 from .hashing import KeyDecoder, hash_password, double_hash_password, NLSClient, get_verifier, xsha1, check_signature
+from .mcp import McpClient, RealmClientStatus
 from .packets import *
 from .products import BncsProduct, LogonMechanism
-from .utils import DataReader, AsyncClientBase, InvalidOperationError
+from .utils import DataReader, AsyncClientBase
+
+from bnls import BnlsClient
 
 
-TIMEOUT = 5         # Default timeout for packet operations (in seconds)
+TIMEOUT = 30         # Default timeout for packet operations (in seconds)
 
 
 class ClientStatus(enum.IntEnum):
@@ -37,7 +40,9 @@ class ClientAuthResult(enum.Enum):
     KeyWrongProduct = 7         # CD key is for a different game
     SpawnDenied = 8             # Client is not permitted to SPAWN
     CheckFailed = 9
+    SignatureInvalid = 10       # The server presented an invalid signature
     UnknownError = -1
+    TimedOut = -2
 
     def __bool__(self):
         return self.value == 1
@@ -53,6 +58,7 @@ class AccountLoginResult(enum.Enum):
     NoEmail = 6                 # Success, but no email is registered to the account
     ServerProofInvalid = 7      # Login accepted, but the server failed SRP validation
     UnknownError = -1           # Something happened.
+    TimedOut = -2
 
     def __bool__(self):
         return self.value in [1, 6]
@@ -69,6 +75,7 @@ class AccountCreateResult(enum.Enum):
     AdjacentPunctuation = 7
     TooMuchPunctuation = 8
     UnknownError = -1
+    TimedOut = -2
 
     def __bool__(self):
         return self.value == 1
@@ -96,6 +103,34 @@ class FriendLocation(enum.IntEnum):
     PrivateGameMutual = 5
 
 
+class ChannelJoinFlags(enum.IntFlag):
+    NoCreate = 0,
+    First = 1,
+    Forced = 2
+    Diablo2 = 4
+
+
+class BncsProtocolError(Exception):
+    def __init__(self, header, message, result=None):
+        self.header = header
+        self.message = message
+        self.result = result
+
+    def __str__(self):
+        return f"{self.header} - {self.message}"
+
+
+class ProductKeyError(Exception):
+    def __init__(self, key, index, message, result):
+        self.key = key                  # The original key str provided
+        self.index = index + 1          # The index of the key in the list of provided keys
+        self.message = message          # A message describing the problem with the key
+        self.result = result            # The result value returned due to this error
+
+    def __str__(self):
+        return f"Product key error (key #{self.index}): {self.message}"
+
+
 def convert_filetime_string(fts):
     """Converts a filetime string from a user data key to a datetime object"""
     buff = DataBuffer()
@@ -110,6 +145,7 @@ class _UdpTestProtocol(asyncio.DatagramProtocol):
         self.tokens = (server_token, udp_token)
         self.transport = None
         self.completed = False
+        self.future = asyncio.get_event_loop().create_future()
 
     def connection_made(self, tx):
         self.transport = tx
@@ -130,6 +166,8 @@ class _UdpTestProtocol(asyncio.DatagramProtocol):
 
     def connection_lost(self, exc):
         self.client.log.debug("UDP test socket closed")
+        if not self.completed:
+            self.future.set_result(False)
 
     def datagram_received(self, data, addr):
         if len(data) >= 4:
@@ -146,6 +184,10 @@ class _UdpTestProtocol(asyncio.DatagramProtocol):
                 if self.completed:
                     return
 
+                if self.client.status >= ClientStatus.Chatting:
+                    self.client.log.warning("Received late UDP response")
+                    return
+
                 self.client.log.info(f"UDP check OK - code: {code}")
 
                 # https://bnetdocs.org/packet/406/sid-udppingresponse
@@ -155,6 +197,7 @@ class _UdpTestProtocol(asyncio.DatagramProtocol):
 
                 self.completed = True
                 self.transport.close()
+                self.future.set_result(self.completed)
             else:
                 self.client.log.warning(f"Received unknown UDP packet: 0x{pid:02X} with {len(data)} bytes of data")
         else:
@@ -165,7 +208,7 @@ class _UdpTestProtocol(asyncio.DatagramProtocol):
 
 
 class BnetClient(AsyncClientBase):
-    def __init__(self, *, bnls_client=None, logger=None, config=None):
+    def __init__(self, *, hashing=None, logger=None, **config):
         logger = logger or logging.getLogger("BNCS")
         AsyncClientBase.__init__(self, BncsReader, logger=logger)
 
@@ -173,19 +216,24 @@ class BnetClient(AsyncClientBase):
             "server": "useast.battle.net",
             "port": 6112,
 
+            "platform": "IX86",                 # Intel x86
             "language": ["ENU", "enUS"],
             "country": ["USA", "United States", "1"],
             "locale": 1033,                     # English US
+            "use_spawn": False,                 # Set True to use the SPAWN system
+            "key_owner": "bncs.py client",      # Name registered to key for this session
+            "verify_server": True,              # Set False to skip server signature verification (W3)
 
-            "platform": "IX86",                 # Intel x86
-            "product": "DRTL",                  # Diablo 1 Retail
             "udp_code": "bnet",                 # Spoofed UDP code
+            "realm_password": "password",       # Password for the Diablo 2 realm server
+
             "keep_alive_interval": 480          # Time between keep-alive messages (seconds)
         }
         if config:
             self.config.update(config)
 
-        self.bnls = bnls_client
+        self.hashing_provider = hashing or BnlsClient()
+        self.realm = None
 
         self.packet_handlers.update({
             SID_NULL: self._handle_null,
@@ -229,6 +277,9 @@ class BnetClient(AsyncClientBase):
         self._account_change_fut = None
         self._enter_chat_fut = None
 
+        # UDP check task
+        self._udp_test = None
+
         self.state = {
             "cookies": [],
             "status": ClientStatus.Offline
@@ -263,21 +314,23 @@ class BnetClient(AsyncClientBase):
         return self.state.get("users", [])
 
     async def _run_udp_test(self, server_token, udp_token):
+        self.state.pop("udp_code", 1)       # Clear any old codes
+
         if self.state.get("check_udp", True):
             self.log.debug("Performing UDP test...")
 
             loop = asyncio.get_event_loop()
             endpoint = self._writer.get_extra_info('peername')
-            coro = loop.create_datagram_endpoint(lambda: _UdpTestProtocol(self, server_token, udp_token),
-                                                 remote_addr=endpoint, family=socket.AF_INET)
-            try:
-                await asyncio.wait_for(coro, timeout=1)
-                return True
-            except asyncio.TimeoutError:
-                self.log.debug("UDP test connection timed out")
-                return False
+            tx, proto = await loop.create_datagram_endpoint(lambda: _UdpTestProtocol(self, server_token, udp_token),
+                                                            remote_addr=endpoint, family=socket.AF_INET)
+            assert isinstance(proto, _UdpTestProtocol)
+            return await proto.future
         else:
-            self.log.debug("UDP test skipped")
+            preset_code = self.check_config("udp_code", require=False)
+            if preset_code is not None:
+                self.state["udp_code"] = preset_code
+            else:
+                self.log.debug("UDP test skipped - client will have UDP plug flag")
 
     def _get_login_mechanism(self, override=None):
         if override is not None:
@@ -303,17 +356,22 @@ class BnetClient(AsyncClientBase):
     def check_config(self, key, override=None, default=None, require=True):
         value = self.config.get(key, default) if override is None else override
         if value is None and require:
-            raise ValueError(f"missing required config paramter: {key}")
+            raise ValueError(f"missing required config parameter: {key}")
         return value
 
     async def connect(self, host=None, port=None):
-        host = host or self.config["server"]
-        port = port or self.config["port"]
-        if await super().connect(host, port):
-            self.state["status"] = ClientStatus.Connected
+        host = self.check_config("server", host)
+        port = self.check_config("port", port)
 
+        if await super().connect(host, port):
             # Send the protocol selection byte (0x1 - BNCS)
             self._writer.write(b'\x01')
+            self.state["status"] = ClientStatus.Connected
+        else:
+            self.state["status"] = ClientStatus.Offline
+
+        self.state.pop("server_error", 1)
+        return self.status == ClientStatus.Connected
 
     def disconnect(self, reason=None):
         hard_futures = [self._client_auth_fut, self._account_login_fut, self._account_create_fut,
@@ -324,6 +382,7 @@ class BnetClient(AsyncClientBase):
                 future.cancel()
 
         super().disconnect(reason)
+        self.state["status"] = ClientStatus.Offline
 
     async def wait_closed(self):
         hard_futures = [self._client_auth_fut, self._account_login_fut, self._account_create_fut,
@@ -336,97 +395,145 @@ class BnetClient(AsyncClientBase):
             await asyncio.sleep(self.config["keep_alive_interval"])
             await self.send(BncsPacket(SID_NULL))
 
-    async def authenticate(self, product=None, keys=None, timeout=TIMEOUT, **options):
+    async def full_connect_and_join(self, host=None, product=None, keys=None, username=None, password=None,
+                                    home_channel=None, *, method=None, timeout=TIMEOUT, **options):
         """
-            Authenticates the client to Battle.net and returns the status of the operation.
+            Connects to a server and performs the full login sequence to join a chat channel.
 
-            Required parameters: (can be set in config)
+            Explicitly named options will be applied at runtime only.
+            All other options will be written to the config before connecting.
+        """
+        self.config.update(**options)
+
+        if await self.connect(host):
+            if await self.authenticate(product, keys, method=method, timeout=timeout) == ClientAuthResult.Passed:
+                # Attempt login - if the account doesn't exist, try to create it
+                for attempt in range(2):
+                    result = await self.login(username, password, timeout=timeout)
+                    if attempt == 0 and result == AccountLoginResult.NoAccount:
+                        created = await self.create_account(username, password, timeout=timeout)
+                        if created == AccountCreateResult.Success:
+                            # Try logging in again
+                            continue
+                    break
+
+                # If a realm is configured, try and connect to it
+                if "realm_name" in self.config:
+                    realm_to_join = self.config["realm_name"]
+
+                    realms = await self.request_realm_list(timeout)
+                    if realm_to_join in realms and await self.join_realm(realm_to_join, timeout=timeout):
+                        chars = await self.realm.request_character_list(timeout=timeout)
+
+                        # If a character is configured, choose it.
+                        if (char_to_choose := self.config.get("realm_character")) and char_to_choose in chars:
+                            await self.realm.change_character(char_to_choose, timeout=timeout)
+
+                # Finally, we can join the chat
+                await self.enter_chat(home_channel, timeout=timeout)
+
+        return self.status
+
+    async def authenticate(self, product=None, keys=None, *, method=None, check_udp=False,
+                           skip_key_checks=False, timeout=TIMEOUT):
+        """
+            Authenticates the client to the server.
+
+            Parameters: (can be set in config)
                 - product: 4-digit str product code identifying the emulated client (ex: 'D2DV')
                 - keys: list[str] of product/CD keys the client should register
-
-            Supported options:
-                - platform: the 4-digit platform code for the emulated game (ex: IX86)
-                - verbyte: int value quickly identifying this product's version (uses BNLS if not set)
-                - logon_method: a bncs.LogonMechanism identifying the process used for authentication
-                - language: a str identifying the product's language (default: US English)
-                - locale: int representing the client's locale (default 1033 [English US])
-                - country: a list[str] values representing the client's country (abbreviation, name, numeric code)
-                - tz_bias: int seconds between UTC and client's local time
-                - spawn: bool indicating if the client should be spawned
-                - key_owner: name to register to the product key(s)
-                - udp_check: bool indicating if the client should verify UDP to the server
+                - method: a bncs.LogonMechanism identifying the process used for authentication
+                - fake_udp: bool indicating if the client should verify UDP to the server
+                - skip_key_checks: if True then coherence checks on product keys will be skipped
 
             Notes:
                 - Official Battle.net servers will timeout this operation when a client is IP banned from connecting.
-                - Optional parameters will default to the default behavior for the specified product.
                 - client state values for 'key_owner' and 'patch_file' will be set for their respective error codes
         """
         err_header = "Client authentication failed"
         if self.status != ClientStatus.Connected:
             msg = 'not connected' if self.status < ClientStatus.Connected else 'already authenticated'
-            raise InvalidOperationError(f"{err_header} - client {msg}")
+            raise BncsProtocolError(err_header, f"client {msg}")
 
         # Valid product must be selected
         product = self.state["product"] = BncsProduct.get(product or self.config.get("product"))
         if product is None:
-            raise InvalidOperationError(f"{err_header} - missing required config parameter: product")
+            raise BncsProtocolError(err_header, "missing required config parameter: product")
 
-        # If the product requires CD keys, make sure we have them and they are valid.
-        self.state["product_keys"] = []
-        self.state.pop("crev_errored_key_index", 1)
+        # If the product requires CD keys, make sure we have them, and they are valid.
+        product_keys = {}
+
         keys_needed = len(product.required_keys)
         if keys_needed > 0:
-            product_keys = keys or self.config.get("keys", [])
+            keys_provided = keys or self.config.get("keys", [])
 
-            if len(product_keys) < keys_needed:
-                raise InvalidOperationError(f"{err_header} - "
-                                            f"missing {keys_needed - len(product_keys)} required product keys")
+            if len(keys_provided) < keys_needed and not skip_key_checks:
+                raise BncsProtocolError(err_header,
+                                        f"{keys_needed} product key(s) required, but only {len(keys_provided)} given")
 
             # Validate the keys we do have
-            for k_idx in range(len(product_keys)):
-                try:
-                    key = KeyDecoder.get(product_keys[k_idx])
-                    if not key.decode():
-                        raise ValueError()
-                    self.state["product_keys"].append(key)
-                except ValueError:
-                    self.log.error(f"{err_header} - key #{k_idx + 1} is invalid (decode failed)")
-                    self.state["crev_errored_key_index"] = k_idx
-                    return ClientAuthResult.InvalidKey
+            for k_idx in range(len(keys_provided)):
+                key = KeyDecoder.get(keys_provided[k_idx])
+                if not key.decode():
+                    # This is required even when key checks are skipped.
+                    raise ProductKeyError(key.key, k_idx, "decode failed", ClientAuthResult.InvalidKey)
 
-        # We just need a version byte to request a challenge
-        verbyte = self.state["verbyte"] = options.get("verbyte", self.config.get("verbyte"))
-        if verbyte is None:
-            if not self.bnls:
-                raise InvalidOperationError(f"{err_header} - missing verbyte and no BNLS client")
+                # Make sure we actually need this key
+                code = key.get_product_code()
+                if not skip_key_checks:
+                    if code in product_keys:
+                        raise ProductKeyError(key.key, k_idx, "duplicate for this product",
+                                              ClientAuthResult.KeyWrongProduct)
+                    elif code not in product.required_keys:
+                        raise ProductKeyError(key.key, k_idx, "not needed for this product",
+                                              ClientAuthResult.KeyWrongProduct)
 
-            self.state["verbyte"] = verbyte = await self.bnls.request_version_byte(product.code)
+                product_keys[code] = key
 
-        # Determine which packet sequence to use
-        mechanism = options.get("logon_method", self.config.get("logon_method", product.logon_mechanism))
+            # Order the keys as needed
+            self.state["product_keys"] = []
+            for keycode in product.required_keys:
+                if keycode in product_keys:
+                    self.state["product_keys"].append(product_keys[keycode])
+                elif not skip_key_checks:
+                    raise BncsProtocolError(err_header, f"Missing key for required product: {keycode}")
 
-        # Save some options for later
-        self.state["platform"] = options.get("platform", self.config["platform"])
-        self.state["check_udp"] = options.get("udp_check", self.config.get("udp_check", product.uses_udp))
-        self.state["key_owner"] = options.get("key_owner", self.config.get("key_owner", "bncs.py client"))
-        self.state["use_spawn"] = options.get("spawn", self.config.get("spawn", False))
+        # Determine which packet sequence to use (product default unless overridden)
+        method = self.check_config("logon_method", method, product.logon_mechanism)
+        mechanism = self.state["logon_method"] = self._get_login_mechanism(method)
+
+        # Set the client state
+        self.state["platform"] = self.check_config("platform")
+        self.state["check_udp"] = self.check_config("check_udp", check_udp, product.uses_udp)
         self.state["client_token"] = random.getrandbits(32)
         self.state["logon_method"] = mechanism
+
+        # Clear values from previous operations
+        self.state.pop("spawned", 1)
+        self.state.pop("key_owner", 1)
+        self.state.pop("key_actual_owner", 1)
         self.state.pop("logon_type", 1)
         self.state.pop("patch_file", 1)
+        self.state.pop("crev_errored_key_index", 1)
 
         self._client_auth_fut = asyncio.get_event_loop().create_future()
-        self.log.info(f"Authenticating as '{self.state['platform']}/{product.code}' client "
-                      f"using '{mechanism.name.lower()}' auth system")
+        hashing = "local" if isinstance(self.hashing_provider, LocalHashingProvider) else "remote"
+        self.log.info(f"Authenticating as '{product.code}' on {self.state['platform']} "
+                      f"using '{mechanism.name.lower()}' auth system with {hashing} hashing")
 
-        # Build some values
+        # We just need a version byte to request a challenge
+        if (verbyte := self.state.get("verbyte")) is None:
+            self.state["verbyte"] = verbyte = \
+                await self.hashing_provider.get_version_byte(product.code, self.state["platform"])
+
+        # Build some additional client-culture values.
         s_time, l_time = datetime.utcnow(), datetime.now()
-        tz_bias = options.get("tz_bias", int((s_time - l_time).total_seconds() / 60))
-        country_info = options.get("country", self.config["country"])
-        language = options.get("language", self.config["language"])
-        locale = options.get("locale", self.config["locale"])
+        tz_bias = self.check_config("tz_bias", default=int((s_time - l_time).total_seconds() / 60))
+        country_info = self.config["country"]
+        language = self.config["language"]
+        locale = self.config["locale"]
 
-        self.log.debug(f"Client auth additional params - verbyte: 0x{verbyte:02X}, tz: {tz_bias}s, "
+        self.log.debug(f"Client auth additional params - verbyte: 0x{verbyte:02X}, tz: {tz_bias}m, "
                        f"ip: {self.state['local_ip']}, locale: 0x{locale:02X}, lang: {language}, ci: {country_info}")
 
         # Initialize versioning
@@ -441,11 +548,11 @@ class BnetClient(AsyncClientBase):
             # https://bnetdocs.org/packet/279/sid-auth-info
             pak.insert_dword(0)                         # Protocol ID, has only ever been 0
             pak.insert_dword(self.state["platform"])
-            pak.insert_dword(self.state["product"].code)
-            pak.insert_dword(self.state["verbyte"])
+            pak.insert_dword(product.code)
+            pak.insert_dword(verbyte)
             pak.insert_dword(language[1] if isinstance(language, list) else language)
             pak.insert_ipv4(self.state["local_ip"])
-            pak.insert_dword(tz_bias)
+            pak.insert_format('<i', tz_bias)
             pak.insert_dword(locale)
             pak.insert_dword(locale)
             pak.insert_string(country_info[0])
@@ -461,11 +568,16 @@ class BnetClient(AsyncClientBase):
             pak.insert_raw(b"\x00" * 18)    # 4 DWORD's + 2 empty strings (all defunct)
             await self.send(pak)
 
+            # If we have a configured timezone bias, we'll need to adjust the 'local time' that we send here
+            #  since this is what the server actually uses.
+            if "tz_bias" in self.config:
+                l_time = (s_time - timedelta(minutes=tz_bias))
+
             # https://bnetdocs.org/packet/287/sid-localeinfo
             x12 = BncsPacket(SID_LOCALEINFO)
             x12.insert_filetime(s_time)
             x12.insert_filetime(l_time)
-            x12.insert_dword(tz_bias)
+            x12.insert_format('<i', tz_bias)
             x12.insert_dword(locale)
             x12.insert_dword(locale)
             x12.insert_dword(locale)
@@ -477,52 +589,51 @@ class BnetClient(AsyncClientBase):
 
             # https://bnetdocs.org/packet/372/sid-startversioning
             x06 = BncsPacket(SID_STARTVERSIONING)
-            x06.insert_dword(options.get("platform", self.config["platform"]))
-            x06.insert_dword(self.state["product"].code)
-            x06.insert_dword(self.state["verbyte"])
+            x06.insert_dword(self.state["platform"])
+            x06.insert_dword(product.code)
+            x06.insert_dword(verbyte)
             x06.insert_dword(0)  # Unknown
             await self.send(x06)
 
-        result = await asyncio.wait_for(self._client_auth_fut, timeout)
-        if result == ClientAuthResult.Passed:
-            self.state["status"] = ClientStatus.Authenticated
-        return result
+        try:
+            result = await asyncio.wait_for(self._client_auth_fut, timeout)
+            if result == ClientAuthResult.Passed:
+                self.state["status"] = ClientStatus.Authenticated
+            return result
+        except asyncio.TimeoutError:
+            return ClientAuthResult.TimedOut
 
-    async def login(self, username=None, password=None, timeout=TIMEOUT, **options):
+    async def login(self, username=None, password=None, *, method=None, ignore_proof=None, timeout=TIMEOUT):
         """
             Logs into a classic Battle.net account and returns the status of the operation.
             This operation will timeout if your account is locked due to failed login attempts.
 
-            Required parameters: (can be set in config)
+            Required parameters:
                 - username: name of the account to login to
                 - password: password for the account
 
-            Supported options:
-                - logon_method: a bncs.LogonMechanism identifying the process used for login
+            Optional parameters:
+                - method: a bncs.LogonMechanism identifying the process used for login
                     (defaults to the product's default method, or the server's specified one if available)
                 - ignore_proof: a bool indicating if the client should ignore the server's password proof (NLS only)
-                - email: an email address to register to the account
-                - nls_version: overrides the version of NLS used (logon_method must also be NLS)
         """
         err_header = "Account login failed"
         if self.status != ClientStatus.Authenticated:
             msg = "not authenticated" if self.status < ClientStatus.Authenticated else "already logged in"
-            raise InvalidOperationError(f"{err_header} - client {msg}")
+            raise BncsProtocolError(err_header, f"client {msg}")
 
         try:
             username = self.check_config("username", username or self.state.get("account_name"))
             password = self.check_config("password", password)
         except ValueError as ve:
-            raise InvalidOperationError(f"{err_header} - {ve}")
+            raise BncsProtocolError(err_header, str(ve))
 
         # Save some options
         self.state["account_name"] = username
-        self.state["register_email"] = options.get("email", self.config.get("email"))
-        self.state.pop("logon_error_code", 1)
-        self.state.pop("logon_error_msg", 1)
+        self.state["register_email"] = self.config.get("email")
 
         self._account_login_fut = asyncio.get_event_loop().create_future()
-        mechanism = self._get_login_mechanism(options.get("logon_method"))
+        mechanism = self._get_login_mechanism(method)
         logon_type = f"NLSv{self.state['logon_type']}" if mechanism == LogonMechanism.New else "OLS"
         self.log.info(f"Logging into account '{username}' using {logon_type}...")
 
@@ -539,13 +650,13 @@ class BnetClient(AsyncClientBase):
 
         elif mechanism == LogonMechanism.New:
             # Server specifies the required version in the response to SID_AUTH_INFO
-            nls_version = options.get("nls_version", self.state.get("logon_type"))
+            nls_version = self.check_config("nls_version", self.state.get("logon_type"))
             if nls_version not in [1, 2]:
-                self.log.error(f"{err_header} - unsupported NLS version: {nls_version}")
-                return AccountLoginResult.NoResult
+                raise BncsProtocolError(err_header, f"unsupported NLS version: {nls_version}",
+                                        AccountLoginResult.NoResult)
 
             nls = self.state["nls_client"] = NLSClient(username, password, nls_version)
-            self.state["ignore_nls_proof"] = options.get("ignore_proof", self.config.get("ignore_nls_proof", False))
+            self.state["ignore_nls_proof"] = self.check_config("ignore_nls_proof", ignore_proof, False)
 
             # https://bnetdocs.org/packet/323/sid-auth-accountlogon
             x53 = BncsPacket(SID_AUTH_ACCOUNTLOGON)
@@ -554,7 +665,7 @@ class BnetClient(AsyncClientBase):
             await self.send(x53)
 
         else:
-            raise InvalidOperationError(f"login mechanism not supported: {mechanism}")
+            raise BncsProtocolError(err_header, f"login mechanism not supported: {mechanism}")
 
         try:
             result = await asyncio.wait_for(self._account_login_fut, timeout)
@@ -565,11 +676,9 @@ class BnetClient(AsyncClientBase):
             return result
         except asyncio.TimeoutError:
             self.log.error(f"{err_header} - timed out, your account may be temporarily locked")
-            self.state["logon_error_code"] = -1
-            self.state["logon_error_msg"] = "Request timed out"
-            return AccountLoginResult.UnknownError
+            return AccountLoginResult.TimedOut
 
-    async def create_account(self, username=None, password=None, timeout=TIMEOUT, **options):
+    async def create_account(self, username=None, password=None, *, method=None, timeout=TIMEOUT):
         """
             Registers a classic Battle.net account and returns success.
 
@@ -577,23 +686,22 @@ class BnetClient(AsyncClientBase):
                 - username: name of the account to register
                 - password: password for the account
 
-            Supported options:
-                - logon_method: a bncs.LogonMechanism identifying the process used for creating
-                - nls_version: overrides the version of NLS used (logon_method must also be NLS)
+            Optional parameters:
+                - method: a bncs.LogonMechanism identifying the process used for creating
         """
         err_header = "Account creation failed"
         if self.status != ClientStatus.Authenticated:
             msg = "not authenticated" if self.status < ClientStatus.Authenticated else "already logged in"
-            raise InvalidOperationError(f"{err_header} - client {msg}")
+            raise BncsProtocolError(err_header, f"client {msg}")
 
         try:
             username = self.check_config("username", username or self.state.get("account_name"))
             password = self.check_config("password", password)
         except ValueError as ve:
-            raise InvalidOperationError(f"{err_header} - {ve}")
+            raise BncsProtocolError(err_header, str(ve))
 
         self._account_create_fut = asyncio.get_event_loop().create_future()
-        mechanism = self._get_login_mechanism(options.get("logon_method"))
+        mechanism = self._get_login_mechanism(method)
         logon_type = f"NLSv{self.state['logon_type']}" if mechanism == LogonMechanism.New else "OLS"
         self.state["account_name"] = username
         self.log.info(f"Creating account '{username}' using {logon_type}...")
@@ -608,9 +716,10 @@ class BnetClient(AsyncClientBase):
             await self.send(pak)
 
         elif mechanism == LogonMechanism.New:
-            nls_version = options.get("nls_version", self.state.get("logon_type"))
+            nls_version = self.check_config("nls_version", self.state.get("logon_type"))
             if nls_version not in [1, 2]:
-                raise InvalidOperationError(f"{err_header} - unsupported NLS version: {nls_version}")
+                raise BncsProtocolError(err_header, f"unsupported NLS version: {nls_version}",
+                                        AccountLoginResult.NoResult)
 
             salt, verifier = get_verifier(username, password, nls_version)
 
@@ -622,15 +731,19 @@ class BnetClient(AsyncClientBase):
             await self.send(x52)
 
         else:
-            raise InvalidOperationError(f"{err_header} - account creation mechanism not supported: {mechanism}")
+            raise BncsProtocolError(err_header, f"account creation mechanism not supported: {mechanism}")
 
-        return await asyncio.wait_for(self._account_create_fut, timeout)
+        try:
+            return await asyncio.wait_for(self._account_create_fut, timeout)
+        except asyncio.TimeoutError:
+            return AccountCreateResult.TimedOut
 
-    async def change_password(self, new_password, old_password=None, account=None, timeout=TIMEOUT, **options):
+    async def change_password(self, new_password, old_password=None, account=None, *,
+                              method=None, ignore_proof=None, timeout=TIMEOUT):
         err_header = "Password change failed"
         if self.status != ClientStatus.Authenticated:
             msg = "not authenticated" if self.status < ClientStatus.Authenticated else "already logged in"
-            raise InvalidOperationError(f"{err_header} - client {msg}")
+            raise BncsProtocolError(err_header, f"client {msg}")
 
         try:
             account = self.check_config("username", account or self.state.get("account_name"))
@@ -638,12 +751,12 @@ class BnetClient(AsyncClientBase):
             c_token = self.state["client_token"]
             s_token = self.state["server_token"]
         except ValueError as ve:
-            raise InvalidOperationError(f"{err_header} - {ve}")
+            raise BncsProtocolError(err_header, str(ve))
         except KeyError:
-            raise InvalidOperationError(f"{err_header} - missing needed client/server tokens")
+            raise BncsProtocolError(err_header, "missing needed client/server tokens")
 
         self._account_change_fut = asyncio.get_event_loop().create_future()
-        mechanism = self._get_login_mechanism(options.get("logon_method"))
+        mechanism = self._get_login_mechanism(method)
         logon_type = f"NLSv{self.state['logon_type']}" if mechanism == LogonMechanism.New else "OLS"
         self.state["account_name"] = account
         self.log.info(f"Changing password for account '{account}' using {logon_type}...")
@@ -660,12 +773,13 @@ class BnetClient(AsyncClientBase):
             await self.send(x31)
 
         elif mechanism == LogonMechanism.New:
-            nls_version = options.get("nls_version", self.state.get("logon_type"))
+            nls_version = self.check_config("nls_version", self.state.get("logon_type"))
             if nls_version not in [1, 2]:
-                raise InvalidOperationError(f"{err_header} - unsupported NLS version: {nls_version}")
+                raise BncsProtocolError(err_header, f"unsupported NLS version: {nls_version}",
+                                        AccountLoginResult.NoResult)
 
             nls = self.state["nls_client"] = NLSClient(account, old_password, nls_version)
-            self.state["ignore_nls_proof"] = options.get("ignore_proof", self.config.get("ignore_nls_proof", False))
+            self.state["ignore_nls_proof"] = self.check_config("ignore_nls_proof", ignore_proof, False)
 
             # https://bnetdocs.org/packet/108/sid-auth-accountchange
             x55 = BncsPacket(SID_AUTH_ACCOUNTCHANGE)
@@ -675,22 +789,22 @@ class BnetClient(AsyncClientBase):
                 self.state["nls_change_params"] = get_verifier(account, new_password, nls_version)
 
         else:
-            raise InvalidOperationError(f"{err_header} - password change mechanism not supported: {mechanism}")
+            raise BncsProtocolError(err_header, f"password change mechanism not supported: {mechanism}",
+                                    AccountLoginResult.NoResult)
 
         try:
             return await asyncio.wait_for(self._account_change_fut, timeout)
+        except asyncio.TimeoutError:
+            return AccountLoginResult.TimedOut
         finally:
-            if "nls_change_params" in self.state:
-                del self.state["nls_change_params"]
+            self.state.pop("nls_change_params", 1)
 
     async def register_email(self, email=None):
         err_header = "Email registration failed"
         if self.status < ClientStatus.LoggedIn:
-            raise InvalidOperationError(f"{err_header} - client not logged in")
+            raise BncsProtocolError(err_header, "client not logged in")
 
-        email = email or self.config.get("email")
-        if email is None:
-            raise InvalidOperationError(f"{err_header} - missing required config parameter: email")
+        email = self.check_config("email", email)
 
         x59 = BncsPacket(SID_SETEMAIL)
         x59.insert_string(email)
@@ -700,13 +814,13 @@ class BnetClient(AsyncClientBase):
         err_header = "Unable to reset password"
         if self.status != ClientStatus.Authenticated:
             msg = "not authenticated" if self.status < ClientStatus.Authenticated else "already logged in"
-            raise InvalidOperationError(f"{err_header} - client {msg}")
+            raise BncsProtocolError(err_header, f"client {msg}")
 
         try:
             account = self.check_config("username", account or self.state.get("account_name"))
             email = self.check_config("email", email)
         except ValueError as ve:
-            raise InvalidOperationError(f"{err_header} - {ve}")
+            raise BncsProtocolError(err_header, str(ve))
 
         # https://bnetdocs.org/packet/405/sid-resetpassword
         x5a = BncsPacket(SID_RESETPASSWORD)
@@ -718,13 +832,13 @@ class BnetClient(AsyncClientBase):
         err_header = "Unable to change email"
         if self.status != ClientStatus.Authenticated:
             msg = "not authenticated" if self.status < ClientStatus.Authenticated else "already logged in"
-            raise InvalidOperationError(f"{err_header} - client {msg}")
+            raise BncsProtocolError(err_header, f"client {msg}")
 
         try:
             account = self.check_config("username", account or self.state.get("account_name"))
             old_email = self.check_config("email", old_email)
         except ValueError as ve:
-            raise InvalidOperationError(f"{err_header} - {ve}")
+            raise BncsProtocolError(err_header, str(ve))
 
         # https://bnetdocs.org/packet/105/sid-changeemail
         x5b = BncsPacket(SID_CHANGEEMAIL)
@@ -733,43 +847,54 @@ class BnetClient(AsyncClientBase):
         x5b.insert_string(new_email)
         await self.send(x5b)
 
-    async def enter_chat(self, timeout=TIMEOUT, **options):
+    async def enter_chat(self, channel=None, stats=None, user=None, timeout=TIMEOUT):
         """
             Enters chat and joins the client's home channel.
 
             Optional parameters:
-                - username: username to send with SID_ENTERCHAT (doesn't usually do anything)
-                - statstring: a custom statstring (may not work for all products)
-                - product: overrides the product used when requesting channel list and joining home
-                    (may not always work or do anything different)
-                - home_channel: a custom channel to join instead of the client's product home
+                - channel: a custom channel to join instead of the client's product home
+                - stats: a custom statstring (may not work for all products)
         """
         err_header = "Unable to enter chat"
         if self.status != ClientStatus.LoggedIn:
             msg = "not logged in" if self.status < ClientStatus.LoggedIn else "already in chat"
-            raise InvalidOperationError(f"{err_header} - client {msg}")
+            raise BncsProtocolError(err_header, f"client {msg}")
 
-        product = BncsProduct.get(options.get("product")) if "product" in options else self.state["product"]
-        home_channel = options.get("home_channel", self.config.get("home_channel", product.home_channel))
+        product = self.state["product"]
 
-        # Uses 'force join' flag if a home channel is explicitly set, otherwise 'first join'
-        home_join_flags = 0x02 if ("home_channel" in options or "home_channel" in self.config) else product.home_flags
+        # Cancel the UDP test if it hasn't finished yet
+        if self._udp_test and not self._udp_test.done():
+            self.log.debug("UDP test timed out, cancelling")
+            self._udp_test.cancel()
 
         self._enter_chat_fut = asyncio.get_event_loop().create_future()
 
+        if self.realm and self.realm.status == RealmClientStatus.OnCharacter:
+            user = self.realm.selected_character if user is None else user
+            stats = f"{self.state['realm_name']},{self.realm.selected_character}" if stats is None else stats
+        else:
+            stats = self.check_config("statstring", stats, "")
+            user = self.state["account_name"] if user is None else user
+
         # https://bnetdocs.org/packet/145/sid-enterchat
         x0a = BncsPacket(SID_ENTERCHAT)
-        x0a.insert_string(options.get("username", self.state["account_name"]))
-        x0a.insert_string(options.get("statstring", self.state.get("statstring", self.config.get("statstring", ""))))
+        x0a.insert_string(user or "")
+        x0a.insert_string(stats)
         await self.send(x0a)
 
-        self.state.update({
-            "channel": None, "users": [], "friends": [], "channels": []
-        })
+        # Request a channel listing
         self.state["channels"] = await self.request_channel_list(product.code)
+
+        # Uses 'force join' flag if a home channel is explicitly set, otherwise 'first join'
+        home_join_flags = product.home_flags \
+            if (channel is None and "home_channel" not in self.config) else ChannelJoinFlags.Forced
+        home_channel = self.check_config("home_channel", channel, product.home_channel)
         await self.join_channel(home_channel, home_join_flags)
 
-        return await asyncio.wait_for(self._enter_chat_fut, timeout)
+        try:
+            return await asyncio.wait_for(self._enter_chat_fut, timeout)
+        except asyncio.TimeoutError:
+            return False
 
     async def send_ping(self, cookie=0):
         # C->S https://bnetdocs.org/packet/268/sid-ping
@@ -811,7 +936,7 @@ class BnetClient(AsyncClientBase):
         err_header = "Unable to retrieve icon data"
         if self.status not in [ClientStatus.Authenticated, ClientStatus.LoggedIn]:
             msg = "not authenticated" if self.status < ClientStatus.Authenticated else "already in chat"
-            raise InvalidOperationError(f"{err_header} - client {msg}")
+            raise BncsProtocolError(err_header, f"client {msg}")
 
         # https://bnetdocs.org/packet/121/sid-geticondata
         await self.send(BncsPacket(SID_GETICONDATA))
@@ -848,7 +973,7 @@ class BnetClient(AsyncClientBase):
     def _validate_user_data_request(self, accounts, keys, ignore, req_type):
         err_header = "User data request failed"
         if self.status < ClientStatus.Authenticated:
-            raise InvalidOperationError(f"{err_header} - client not authenticated")
+            raise BncsProtocolError(err_header, "client not authenticated")
 
         accounts = [accounts] if not isinstance(accounts, list) else accounts
         keys = [keys] if not isinstance(keys, list) else keys
@@ -858,11 +983,11 @@ class BnetClient(AsyncClientBase):
             blocked_header = "User data request blocked"
 
             if len(accounts) > 1:
-                raise InvalidOperationError(f"{blocked_header} - only 1 account can be {req_type} at a time")
+                raise BncsProtocolError(blocked_header, f"only 1 account can be {req_type} at a time")
             elif len(keys) >= 32:
-                raise InvalidOperationError(f"{blocked_header} - cannot {req_type} 32 or more keys at a time")
+                raise BncsProtocolError(blocked_header, f"cannot {req_type} 32 or more keys at a time")
             elif req_type == 'set' and accounts[0].lower() != self.state.get("account_name", "").lower():
-                raise InvalidOperationError(f"{blocked_header} - you can only modify your own account")
+                raise BncsProtocolError(blocked_header, "you can only modify your own account")
 
         return accounts, keys
 
@@ -961,7 +1086,7 @@ class BnetClient(AsyncClientBase):
     async def leave_chat(self):
         # Client must be in chat
         if self.status < ClientStatus.Chatting:
-            raise InvalidOperationError("Unable to leave chat - client not in chat")
+            raise BncsProtocolError("Unable to leave chat", "client not in chat")
 
         # https://bnetdocs.org/packet/339/sid-leavechat
         await self.send(BncsPacket(SID_LEAVECHAT))
@@ -1106,9 +1231,72 @@ class BnetClient(AsyncClientBase):
                 "product": BncsProduct.get(reply.get_dword()),
                 "location_name": reply.get_string()
             })
+
         self.log.debug(f"Received friends list update with {count} entries")
         self.state["friends"] = friends
         return friends
+
+    async def request_realm_list(self, timeout=TIMEOUT):
+        # C->S https://bnetdocs.org/packet/322/sid-queryrealms2
+        await self.send(BncsPacket(SID_QUERYREALMS2))
+
+        # S->C https://bnetdocs.org/packet/277/sid-queryrealms2
+        reply = await self.wait_for_packet(SID_QUERYREALMS2, timeout=timeout)
+        reply.get_dword()           # Unknown (usually 0)
+
+        realms = []
+        count = reply.get_dword()
+        for _ in range(count):
+            reply.get_dword()       # Unknown (usually 1)
+            realms.append((reply.get_string(), reply.get_string()))     # title, description
+
+        self.log.debug(f"Received realm listing with {count} entries: {', '.join(r[0] for r in realms)}")
+        self.state["realms"] = realms
+        return realms
+
+    async def join_realm(self, realm=None, password=None, timeout=TIMEOUT):
+        err_header = "Realm login failed"
+        if self.status != ClientStatus.LoggedIn:
+            msg = 'not logged in' if self.status < ClientStatus.LoggedIn else 'already in chat'
+            raise BncsProtocolError(err_header, msg)
+
+        if self.realm is not None:
+            raise BncsProtocolError("Cannot join realm", "client is already joined to a realm")
+
+        c_token = self.state["client_token"]
+        s_token = self.state["server_token"]
+
+        realm = self.check_config("realm_name", realm)
+        password = self.check_config("realm_password", password)
+
+        self.log.info(f"Logging into realm '{realm}'...")
+
+        # C->S https://bnetdocs.org/packet/144/sid-logonrealmex
+        x3e = BncsPacket(SID_LOGONREALMEX)
+        x3e.insert_dword(c_token)
+        x3e.insert_raw(double_hash_password(password, c_token, s_token))
+        x3e.insert_string(realm)
+        await self.send(x3e)
+
+        # S->C https://bnetdocs.org/packet/237/sid-logonrealmex
+        reply = await self.wait_for_packet(SID_LOGONREALMEX, timeout=timeout)
+        if len(reply) <= 12:
+            self.log.error(err_header)
+            return False
+
+        # Most of the actual values in this packet aren't important, we just copy them over
+        startup_data = reply.get_raw(16)
+        realm_ip = reply.get_ipv4()
+        realm_port = reply.get_format('>HH')[0]     # 2nd part is discarded
+        startup_data += reply.get_raw(48) + reply.get_string(encoding=None)
+
+        # Create a realm client and attempt a connection
+        self.realm = McpClient(realm_ip, realm_port)
+        if not await self.realm.connect():
+            self.realm = None
+            return False
+        self.state["realm_name"] = realm
+        return await self.realm.startup(startup_data, timeout=timeout)
 
     async def _handle_null(self, packet):
         pass
@@ -1122,9 +1310,12 @@ class BnetClient(AsyncClientBase):
         self.state["udp_token"] = udp_token = packet.get_dword()
         self.state["server_token"] = server_token = packet.get_dword()
         self.log.debug(f"Server OLS auth challenge - token: {server_token}, udp: {udp_token}")
-        await self._run_udp_test(server_token, udp_token)
+        self._udp_test = asyncio.create_task(self._run_udp_test(server_token, udp_token))
 
     async def _handle_auth_challenge(self, packet):
+        # Handles version check requests presented by the server
+        err_header = "Client authentication failed"
+
         if packet.packet_id == SID_STARTVERSIONING:
             # https://bnetdocs.org/packet/127/sid-startversioning
             filetime = packet.get_filetime()
@@ -1140,7 +1331,7 @@ class BnetClient(AsyncClientBase):
             self.state["server_token"] = s_token = packet.get_dword()
             self.state["udp_token"] = u_token = packet.get_dword()
             self.log.debug(f"Server NLS auth challenge - login: {type_name}, token: {s_token}, udp: {u_token}")
-            await self._run_udp_test(s_token, u_token)
+            self._udp_test = asyncio.create_task(self._run_udp_test(s_token, u_token))
 
             filetime = packet.get_filetime()
             archive = packet.get_string()
@@ -1150,41 +1341,43 @@ class BnetClient(AsyncClientBase):
             if not packet.eob():
                 server_ip = self.state["remote_ip"]
                 signature = packet.get_raw(128)
-                if check_signature(signature, server_ip):
-                    self.log.info(f"Server signature verified! (IP: {server_ip})")
-                else:
-                    self.log.warning(f"Server signature verification failed (IP: {server_ip})"
-                                     f" - this may not be an official server")
-        else:
-            raise InvalidOperationError(f"Unsupported packet sent to handle_auth_challenge: 0x{packet.packet_id:02X}")
 
-        self.log.debug(f"Versioning challenge - archive: {archive}, seed: {format_crev_formula(formula)}")
+                verify_server = self.check_config("verify_server", default=True)
+                if verify_server:
+                    if check_signature(signature, server_ip):
+                        self.log.info(f"Server signature verified! (IP: {server_ip})")
+                    else:
+                        msg = f"Server signature verification failed (IP: {server_ip}) - " \
+                              f"this may not be an official Battle.net server"
+                        self.log.error(msg)
+                        self._client_auth_fut.set_result(ClientAuthResult.SignatureInvalid)
+                else:
+                    self.log.warning("Skipped server signature verification")
+        else:
+            ex = BncsProtocolError(err_header,
+                                   f"Unsupported packet sent to handle_auth_challenge: 0x{packet.packet_id:02X}",
+                                   ClientAuthResult.UnknownError)
+            return self._client_auth_fut.set_exception(ex)
+
+        self.log.debug(f"Server sent versioning challenge - archive: {archive}, seed: {format_crev_seed(formula)}")
         self.state["crev_challenge"] = {
             "archive": archive,
             "timestamp": filetime,
             "formula": formula
         }
 
-        err_header = "Client authentication failed"
-        results = None
-        if self.bnls:
-            results = self.state["crev_results"] = \
-                await self.bnls.check_version(self.state["product"].code, archive, formula, filetime)
+        # Perform the version check
+        results = self.state["crev_results"] = \
+            await self.hashing_provider.check_version(self.state["product"].code, archive, formula, filetime)
 
-            if not results:
-                self.log.error(f"{err_header} - BNLS failed version check")
-        else:
-            # Local hashing still not supported
-            self.log.error(f"{err_header} - local hashing is not supported.")
-
-        if results is None or not results.check.success:
+        if results is None or not results.success:
             # We have no way to continue
             self._client_auth_fut.set_result(ClientAuthResult.CheckFailed)
-            self.disconnect("Check revision failed (client)")
+            return self.disconnect(f"{err_header} - client was unable to complete the version check")
         else:
-            results = results.check
             self.log.debug(results)
 
+        # Send our response
         if packet.packet_id == SID_STARTVERSIONING:
             # Send SID_REPORTVERSION: https://bnetdocs.org/packet/347/sid-reportversion
             x07 = BncsPacket(SID_REPORTVERSION)
@@ -1198,6 +1391,8 @@ class BnetClient(AsyncClientBase):
 
         elif packet.packet_id == SID_AUTH_INFO:
             keys = self.state.get("product_keys", [])
+            spawn = self.state["spawned"] = self.config["use_spawn"]
+            owner = self.state["key_owner"] = self.config["key_owner"]
 
             # Send SID_AUTH_CHECK: https://bnetdocs.org/packet/408/sid-auth-check
             x51 = BncsPacket(SID_AUTH_CHECK)
@@ -1205,10 +1400,10 @@ class BnetClient(AsyncClientBase):
             x51.insert_dword(results.version)
             x51.insert_dword(results.checksum)
             x51.insert_dword(len(keys))
-            x51.insert_dword(1 if self.state["use_spawn"] else 0)
+            x51.insert_dword(1 if spawn else 0)
 
-            if self.state["use_spawn"]:
-                self.log.debug("Attempting to use SPAWN")
+            if spawn:
+                self.log.debug("Client attempting to register as a SPAWN")
 
             for k_idx in range(len(keys)):
                 key = keys[k_idx]
@@ -1222,14 +1417,16 @@ class BnetClient(AsyncClientBase):
                 x51.insert_raw(key.get_hash(self.state["client_token"], self.state["server_token"]))
 
             x51.insert_raw(results.info + b'\0')
-            x51.insert_string(self.state["key_owner"])
+            x51.insert_string(owner)
             await self.send(x51)
 
     async def _handle_auth_result(self, packet):
+        # Handles the success/fail result of a version check
         err_header = "Client authentication failed"
         result = ClientAuthResult.UnknownError
 
         if packet.packet_id == SID_REPORTVERSION:
+            # Old login system, separate key validation
             # https://bnetdocs.org/packet/412/sid-reportversion
             status = packet.get_dword()
             result_lookup = {
@@ -1245,22 +1442,26 @@ class BnetClient(AsyncClientBase):
                 if len(keys) == 1:
                     self.log.debug(f"Product key: {keys[0].get_product_name()} "
                                    f"(length: {len(keys[0])}, public: 0x{keys[0].public:08X})")
-                    if self.state["use_spawn"]:
-                        self.log.debug("Attempting to use SPAWN")
+
+                    spawn = self.state["spawned"] = self.config["use_spawn"]
+                    owner = self.state["key_owner"] = self.config["key_owner"]
+
+                    if spawn:
+                        self.log.debug("Client attempting to register as a SPAWN")
 
                     # Register and validate product keys
                     if self.state["logon_method"] == LogonMechanism.Legacy:
                         # https://bnetdocs.org/packet/170/sid-cdkey
                         x30 = BncsPacket(SID_CDKEY)
-                        x30.insert_dword(1 if self.state["use_spawn"] else 0)
+                        x30.insert_dword(1 if spawn else 0)
                         x30.insert_string(keys[0].key)
-                        x30.insert_string(self.state["key_owner"])
+                        x30.insert_string(owner)
                         await self.send(x30)
 
                     else:
                         # https://bnetdocs.org/packet/359/sid-cdkey2
                         x36 = BncsPacket(SID_CDKEY2)
-                        x36.insert_dword(1 if self.state["use_spawn"] else 0)
+                        x36.insert_dword(1 if spawn else 0)
                         x36.insert_dword(len(keys[0]))
                         x36.insert_dword(keys[0].product)
                         x36.insert_dword(keys[0].public)
@@ -1270,15 +1471,20 @@ class BnetClient(AsyncClientBase):
                         key_buff = struct.pack('<5L', self.state["client_token"], self.state["server_token"],
                                                keys[0].product, keys[0].public, keys[0].private)
                         x36.insert_raw(xsha1(key_buff).digest())
-                        x36.insert_string(self.state["key_owner"])
+                        x36.insert_string(owner)
                         await self.send(x36)
 
+                    # We need to wait for the response to the above CD key packets to continue
+                    return
+
                 elif len(keys) > 1:
-                    # Too many keys, can't continue with this method (or can we?)
-                    # TODO: Find out if we can use SID_CDKEY2 or SID_CDKEY3 for multi-key auth
-                    raise InvalidOperationError(f"{err_header} - multi-key product used with single-key auth method")
+                    # Too many keys, can't continue with this method
+                    ex = BncsProtocolError(err_header, "multi-key product used with single-key auth method",
+                                           ClientAuthResult.NoResult)
+                    return self._client_auth_fut.set_exception(ex)
 
         elif packet.packet_id == SID_AUTH_CHECK:
+            # New login system, we're all done.
             # https://bnetdocs.org/packet/106/sid-auth-check
             status = packet.get_dword()
             if status == 0:
@@ -1309,6 +1515,7 @@ class BnetClient(AsyncClientBase):
                 result = result_lookup.get(status & ~0x0F0, result)
 
         elif packet.packet_id in [SID_CDKEY, SID_CDKEY2]:
+            # Old login system, response to key verification
             # Response is the same for both SID_CDKEY and SID_CDKEY2
             # SID_CDKEY: https://bnetdocs.org/packet/188/sid-cdkey
             # SID_CDKEY2: https://bnetdocs.org/packet/184/sid-cdkey2
@@ -1324,14 +1531,16 @@ class BnetClient(AsyncClientBase):
             if result != ClientAuthResult.Passed:
                 self.state["crev_errored_key_index"] = 0
         else:
-            raise InvalidOperationError(f"Unsupported packet sent to handle_auth_result: 0x{packet.packet_id:02X}")
+            self.log.warning(f"Unsupported packet sent to handle_auth_result: 0x{packet.packet_id:02X}")
+            return
 
         if result != ClientAuthResult.Passed:
             if result == ClientAuthResult.KeyInUse:
-                owner = self.state["key_owner"] = packet.get_string()
+                owner = self.state["key_actual_owner"] = packet.get_string()
                 if self.state["use_spawm"] and owner in ["TOO MANY SPAWNS", "NO SPAWNING"]:
                     result = ClientAuthResult.SpawnDenied
-            elif result == ClientAuthResult.PatchNeeded:
+
+            elif result == ClientAuthResult.PatchRequired:
                 self.state["patch_file"] = packet.get_string()
 
             key_number = self.state.get("crev_errored_key_index", -1) + 1
@@ -1344,14 +1553,26 @@ class BnetClient(AsyncClientBase):
                 ClientAuthResult.KeyWrongProduct: f"product key #{key_number} is for another game",
                 ClientAuthResult.SpawnDenied: f"product key #{key_number} denied spawn ({self.state['key_owner']})"
             }
-            self.log.error(f"{err_header} - {error_lookup.get(result, 'Unknown error')}")
+
+            # Register and print this error
+            msg = str(BncsProtocolError(err_header, error_lookup.get(result, "Unknown error"), result))
+            self.state["server_error"] = msg
+            self.log.error(msg)
         else:
             self.log.info(f"Client completed identification as {self.state['product'].name}")
+
+            # If we're spoofing UDP, we can send the code now
+            if not self.state.get("check_udp", True) and "udp_code" in self.state:
+                self.log.debug("UDP test skipped - sending pre-configured value")
+                x14 = BncsPacket(SID_UDPPINGRESPONSE)
+                x14.insert_dword(self.state["udp_code"])
+                await self.send(x14)
 
         self._client_auth_fut.set_result(result)
         return result
 
-    def _display_logon_error(self, result, header):
+    def _set_logon_error(self, result, header, message=None):
+        # Many functions all use the same error lookup, consolidate that here
         if result in [AccountLoginResult.NoResult, AccountLoginResult.Success]:
             return
 
@@ -1366,12 +1587,14 @@ class BnetClient(AsyncClientBase):
         }
         error = error_lookup.get(result, AccountLoginResult.UnknownError)
         if result in [AccountLoginResult.AccountClosed, AccountLoginResult.UnknownError]:
-            error = error.replace("%0", str(self.state.get("logon_error_msg")))
+            error = error.replace("%0", str(message))
 
         if result == AccountLoginResult.NoEmail:
             self.log.info(error)
         else:
-            self.log.error(f"{header} - {error}")
+            msg = f"{header} - {error}"
+            self.state["server_error"] = msg
+            self.log.error(msg)
 
     async def _handle_logon_challenge(self, packet):
         result = AccountLoginResult.NoResult
@@ -1382,19 +1605,26 @@ class BnetClient(AsyncClientBase):
             # https://bnetdocs.org/packet/407/sid-auth-accountchange
             status = packet.get_dword()
             reply_id = packet.packet_id + 1
-            err_header = ("Account login" if packet.packet_id == SID_AUTH_ACCOUNTLOGON else "Password change")
+
+            if packet.packet_id == SID_AUTH_ACCOUNTLOGON:
+                err_header = "Account login"
+                fut = self._account_login_fut
+            else:
+                err_header = "Password change"
+                fut = self._account_change_fut
 
             if status == 0x00:      # Accepted, requires proof
                 salt = packet.get_raw(32)
                 server_key = packet.get_raw(32)
                 if salt == 0:
-                    self.log.debug(f"NLS account salt returned NULL")
+                    self.log.warning(f"{err_header} notice - server returned NULL password salt")
 
                 nls = self.state["nls_client"]
                 proof = nls.process_challenge(salt, server_key)
                 if not proof:
-                    self.log.error(f"{err_header} failed - SRP client proof calculation failed")
-                    result = AccountLoginResult.UnknownError
+                    ex = BncsProtocolError(err_header, "SRP client proof calculation failed",
+                                           AccountLoginResult.UnknownError)
+                    return fut.set_exception(ex)
                 else:
                     # These packets start off the same, but the change version has some additional fields
                     # https://bnetdocs.org/packet/378/sid-auth-accountlogonproof
@@ -1418,17 +1648,20 @@ class BnetClient(AsyncClientBase):
             if result == AccountLoginResult.UnknownError:
                 self.state["logon_error_code"] = status
 
+            # There is no success yet, only errors
+            if result != AccountLoginResult.NoResult:
+                self._set_logon_error(result, err_header)
+                fut.set_result(result)
         else:
-            self.log.error(f"Unsupported packet sent to handle_logon_challenge: 0x{packet.packet_id:02X}")
+            self.log.warning(f"Unsupported packet sent to handle_logon_challenge(): 0x{packet.packet_id:02X}")
             return
 
-        if result != AccountLoginResult.NoResult:
-            self._display_logon_error(result, err_header)
-            self._account_login_fut.set_result(result)
         return result
 
     async def _handle_logon_result(self, packet):
         result = AccountLoginResult.UnknownError
+        is_pw_change = packet.packet_id in [SID_AUTH_ACCOUNTCHANGEPROOF, SID_CHANGEPASSWORD]
+        error_message = "unknown"
 
         if packet.packet_id in [SID_AUTH_ACCOUNTLOGONPROOF, SID_AUTH_ACCOUNTCHANGEPROOF]:
             # These packets have the same format, just with different functions.
@@ -1445,23 +1678,18 @@ class BnetClient(AsyncClientBase):
             }
             result = status_lookup.get(status, result)
 
-            proof = packet.get_raw(20)      # Read even if we know it failed (error comes after)
+            proof = packet.get_raw(20)      # Read even if we know it failed (error message comes after)
 
             if result in [AccountLoginResult.Success, AccountLoginResult.NoEmail]:
                 nls = self.state["nls_client"]
-                if not nls.verify(proof):
-                    ignore_proof = self.state["ignore_nls_proof"]
-                    printer = (self.log.warning if ignore_proof else self.log.error)
-                    printer("Server accepted password but gave invalid NLS proof")
-                    if not ignore_proof:
-                        result = AccountLoginResult.ServerProofInvalid
+                if self.state["ignore_nls_proof"] is False and not nls.verify(proof):
+                    result = AccountLoginResult.ServerProofInvalid
 
                 if result == AccountLoginResult.NoEmail and "register_email" in self.state:
                     await self.register_email(self.state["register_email"])
 
             elif result in [AccountLoginResult.AccountClosed, AccountLoginResult.UnknownError]:
-                self.state["logon_error_code"] = status
-                self.state["logon_error_msg"] = \
+                error_message = \
                     packet.get_string() if status in [0x06, 0x0F] else \
                     "Account has no salt" if status == 0x48 else None
 
@@ -1481,32 +1709,26 @@ class BnetClient(AsyncClientBase):
             }
             result = status_lookup.get(status, result)
 
-            if result != AccountLoginResult.Success:
-                self.state["logon_error_code"] = status
             if result == AccountLoginResult.AccountClosed:
-                self.state["logon_error_msg"] = packet.get_string()
+                error_message = packet.get_string()
 
         elif packet.packet_id == SID_CHANGEPASSWORD:
             # https://bnetdocs.org/packet/220/sid-changepassword
             result = AccountLoginResult.Success if packet.get_dword() == 0 else AccountLoginResult.UnknownError
 
-        else:
-            raise InvalidOperationError(f"Unsupported packet sent to handle_logon_result: 0x{packet.packet_id:02X}")
-
         if result == AccountLoginResult.Success:
-            self.log.info(f"Logged into account '{self.state['account_name']}'")
+            self.log.info("Account login accepted")
         else:
-            is_pw_change = packet.packet_id in [SID_AUTH_ACCOUNTCHANGEPROOF, SID_CHANGEPASSWORD]
-            self._display_logon_error(result, ("Password change" if is_pw_change else "Account login") + " failed")
+            header = ("Password change" if is_pw_change else "Account login") + " failed"
+            self._set_logon_error(result, header, error_message)
 
-        if packet.packet_id == SID_AUTH_ACCOUNTCHANGEPROOF:
-            self._account_change_fut.set_result(result)
-        else:
-            self._account_login_fut.set_result(result)
+        fut = self._account_change_fut if is_pw_change else self._account_login_fut
+        fut.set_result(result)
         return result
 
     async def _handle_account_create_result(self, packet):
         err_header = "Account creation failed"
+        err_message = "unknown"
 
         if packet.packet_id == SID_AUTH_ACCOUNTCREATE:
             # https://bnetdocs.org/packet/138/sid-auth-accountcreate
@@ -1521,10 +1743,10 @@ class BnetClient(AsyncClientBase):
                 0x0B: AccountCreateResult.AdjacentPunctuation,
                 0x0C: AccountCreateResult.TooMuchPunctuation
             }
-            result = status_lookup.get(status, AccountCreateResult.AccountAlreadyExists)
+            result = status_lookup.get(status, AccountCreateResult.UnknownError)
 
-            if result == AccountCreateResult.AccountAlreadyExists:
-                self.state["account_create_error_code"] = status
+            if result == AccountCreateResult.Success:
+                err_message = status
 
         elif packet.packet_id == SID_CREATEACCOUNT:
             # https://bnetdocs.org/packet/228/sid-createaccount
@@ -1544,17 +1766,14 @@ class BnetClient(AsyncClientBase):
                 0x05: AccountCreateResult.UnknownError,
                 0x06: AccountCreateResult.TooFewAlphanumeric,
                 0x07: AccountCreateResult.AdjacentPunctuation,
-                0x08: AccountCreateResult.TooManyPunctuation
+                0x08: AccountCreateResult.TooMuchPunctuation
             }
             result = status_lookup.get(status, AccountCreateResult.UnknownError)
-
-            if result != AccountCreateResult.Success:
-                self.state["account_create_error_code"] = status
-                self.state["account_create_error_msg"] = packet.get_string()
+            err_message = packet.get_string()
 
         else:
-            raise InvalidOperationError(f"Unsupported packet sent to "
-                                        f"handle_account_create_result: 0x{packet.packet_id:02X}")
+            self.log.warning(f"Unsupported packet sent to handle_account_create_result: 0x{packet.packet_id:02X}")
+            return
 
         if result not in [AccountCreateResult.NoResult, AccountCreateResult.Success]:
             error_lookup = {
@@ -1564,21 +1783,17 @@ class BnetClient(AsyncClientBase):
                 AccountCreateResult.BannedWord: "Name contains a banned word",
                 AccountCreateResult.TooFewAlphanumeric: "Name contains too few alphanumeric characters",
                 AccountCreateResult.AdjacentPunctuation: "Name contains adjacent punctuation characters",
-                AccountCreateResult.TooManyPunctuation: "Name contains too many adjacent punctuation characters",
+                AccountCreateResult.TooMuchPunctuation: "Name contains too many adjacent punctuation characters",
                 AccountCreateResult.UnknownError: "An unknown error occurred: %0"
             }
             error = error_lookup.get(result, AccountCreateResult.UnknownError)
             if result == AccountCreateResult.UnknownError:
-                error = error.replace("%0", str(self.state.get("account_create_error_code")))
+                error = error.replace("%0", str(err_message))
 
             self.log.error(f"{err_header} - {error}")
 
-            server_err_msg = self.state.get("account_create_error_msg")
-            if server_err_msg:
-                self.log.error(f"{err_header} - Additional info: {server_err_msg}")
-
         elif result == AccountCreateResult.Success:
-            self.log.info(f"Account created: '{self.state['account_name']}'")
+            self.log.info(f"Successfully created account '{self.state['account_name']}'")
 
         self._account_create_fut.set_result(result)
         return result
@@ -1592,7 +1807,7 @@ class BnetClient(AsyncClientBase):
     async def _handle_enter_chat(self, packet):
         # https://bnetdocs.org/packet/186/sid-enterchat
         self.state["username"] = packet.get_string()
-        self.state["statstring"] = packet.get_string()
+        self.state["statstring"] = packet.get_string(encoding=None)
         self.state["account_name"] = packet.get_string()
 
         # Connection is effectively completed.
