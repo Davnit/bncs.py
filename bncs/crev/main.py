@@ -218,19 +218,24 @@ class LocalHashingProvider:
             raise FileNotFoundError("one or more required hashing files could not be found",
                                     [f for f in files if not path.isfile(f)])
 
-        if method in [CREV_CLASSIC, CREV_CLASSIC_EXT]:
-            # Classic - run formula over blocks of each file
-            version, info = classic.get_file_version_and_info(files[0])
-            checksum = classic.check_version(formula, archive, files)
-        elif method == CREV_LOCKDOWN:
-            # Lockdown - seeded hash of key parts of files + (simulated) memory
-            version, _ = classic.get_file_version_and_info(files[0])
-            checksum, info = lockdown.check_version(formula, files)
-        elif method == CREV_SIMPLE:
-            # Simple - hash of EXE's version number and (sometimes) public key
-            version, checksum, info = simple.check_version(formula, files[0], archive.endswith("D1.mpq"))
-        else:
-            raise CheckRevisionFailedError(f"Unsupported check revision archive: {archive}")
+        try:
+            if method in [CREV_CLASSIC, CREV_CLASSIC_EXT]:
+                # Classic - run formula over blocks of each file
+                version, info = classic.get_file_version_and_info(files[0])
+                checksum = classic.check_version(formula, archive, files)
+            elif method == CREV_LOCKDOWN:
+                # Lockdown - seeded hash of key parts of files + (simulated) memory
+                version, _ = classic.get_file_version_and_info(files[0])
+                checksum, info = lockdown.check_version(formula, files)
+            elif method == CREV_SIMPLE:
+                # Simple - hash of EXE's version number and (sometimes) public key
+                version, checksum, info = simple.check_version(formula, files[0], archive.endswith("D1.mpq"))
+            else:
+                raise CheckRevisionFailedError(f"Unsupported check revision archive: {archive}")
+        except Exception as ex:
+            self.log.error("Local version check failed")
+            self.log.exception(ex)
+            return None
 
         results = CheckRevisionResults()
         results.version = version
