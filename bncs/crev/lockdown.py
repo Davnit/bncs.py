@@ -255,13 +255,8 @@ def check_version(seed, files):
     if len(files) < 3:
         raise ValueError("Not enough files to complete Lockdown CheckRevision")
 
-    library = files.pop()       # files[4] == archive 'lockdown-XXXX-YY.mpq'
-    memdump = files.pop()       # files[3] == bin 'ZZZZ.bin'
-
-    if (not library.startswith("lockdown-") or not library.endswith(".mpq")) or \
-            (len(memdump) != 8 or not memdump.endswith(".bin")):
-        raise ValueError("Invalid files passed to Lockdown CheckRevision. Screen dump and library must come last.")
-
+    library = files.pop()       # files[4] == 'lockdown-XXXX-YY.dll'
+    memdump = files.pop()       # files[3] == 'ZZZZ.bin'
     ctx = lockdown_sha1()
 
     # Decode the seed value
