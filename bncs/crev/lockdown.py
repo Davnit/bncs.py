@@ -18,10 +18,11 @@ heap_data = {}
 
 
 def build_heap(file):
-    if (pe := pe_structs.get(file)) is None:
-        pe = pe_structs[file] = pefile.PE(file)
+    key = file.lower()
+    if (pe := pe_structs.get(key)) is None:
+        pe = pe_structs[key] = pefile.PE(file)
 
-    if (heap := heap_data.get(file)) is None:
+    if (heap := heap_data.get(key)) is None:
         heap = LockdownHeap()
         if pe.has_relocs():
             # noinspection PyTypeChecker
@@ -32,7 +33,7 @@ def build_heap(file):
 
         # Sort the heap and store it in the cache
         heap.sort()
-        heap_data[file] = heap
+        heap_data[key] = heap
 
     return heap, pe
 

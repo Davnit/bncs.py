@@ -47,8 +47,9 @@ def get_hashcode(mpq):
 
 def get_file_version_and_info(file):
     """Returns the version and 'exe information' values from an file."""
-    if (pe := pe_structs.get(file)) is None:
-        pe = pe_structs[file] = pefile.PE(file)
+    key = file.lower()
+    if (pe := pe_structs.get(key)) is None:
+        pe = pe_structs[key] = pefile.PE(file)
 
     # EXE Version
     ffi = pe.VS_FIXEDFILEINFO[0]

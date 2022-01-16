@@ -12,8 +12,9 @@ public_keys = {}
 
 
 def get_public_key(file):
-    if key := public_keys.get(file):
-        return key
+    key = file.lower()
+    if value := public_keys.get(key):
+        return value
 
     with open(file, 'rb') as fh:
         # The EXE must be digitally signed
@@ -21,7 +22,7 @@ def get_public_key(file):
         cert = list(pe.signed_datas)[0].certificates[0]
 
         # signify library returns the public key as a binary (1/0) string
-        public_key = public_keys[file] = hex(int(str(cert.subject_public_key), 2))
+        public_key = public_keys[key] = hex(int(str(cert.subject_public_key), 2))
         return public_key
 
 
