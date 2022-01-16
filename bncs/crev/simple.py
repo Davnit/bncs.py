@@ -4,7 +4,7 @@ from hashlib import sha1
 import struct
 
 import pefile
-from signify.authenticode import SignedPEFile
+from signify.authenticode import SignedPEFile, SignedPEParseError
 
 from .classic import pe_structs
 
@@ -17,9 +17,14 @@ def get_public_key(file):
         return value
 
     with open(file, 'rb') as fh:
-        # The EXE must be digitally signed
-        pe = SignedPEFile(fh)
-        cert = list(pe.signed_datas)[0].certificates[0]
+        try:
+            # The EXE must be digitally signed
+            pe = SignedPEFile(fh)
+            cert = list(pe.signed_datas)[0].certificates[0]
+        except SignedPEParseError:
+            # File is not signed
+            public_keys[key] = None
+            return None
 
         # signify library returns the public key as a binary (1/0) string
         public_key = public_keys[key] = hex(int(str(cert.subject_public_key), 2))
