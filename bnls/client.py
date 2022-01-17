@@ -244,6 +244,7 @@ class BnlsClient(AsyncClientBase):
         """
         x0b = BnlsPacket(BNLS_HASHDATA)
         x0b.insert_dword(len(data))
+        x0b.insert_dword(flags)
         x0b.insert_raw(data)
 
         if flags & 2 == 2:
