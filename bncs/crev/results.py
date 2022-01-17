@@ -14,7 +14,7 @@ class CheckRevisionResults:
         from .main import format_crev_seed
 
         if self.success:
-            return "CRev Results:%s version: %s, checksum: %.8x, info: %s" % \
+            return "CRev Results:%s version: %s, checksum: 0x%.8X, info: %s" % \
                    ((" %s -" % self.product) if self.product else "",
                     self.get_version_string(), self.checksum, format_crev_seed(self.info))
         else:

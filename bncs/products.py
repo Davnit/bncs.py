@@ -35,11 +35,11 @@ _logon_mechanism_values = {
 }
 
 
-def load_product_metadata(source):
+def load_product_metadata(source=None):
     global supported_products
 
-    if isinstance(source, bytes):
-        data = json.loads(source)
+    if source is None:
+        data = json.loads(pkg_resources.resource_string(__name__, 'products.json'))
     else:
         with open(source) as fh:
             data = json.load(fh)
@@ -67,8 +67,6 @@ def load_product_metadata(source):
 
 
 class BncsProduct:
-    all_products = supported_products
-
     def __init__(self, code, full_name):
         self.code = code.upper()
         self.name = full_name
@@ -100,7 +98,7 @@ class BncsProduct:
             ID can be the DWORD (both string and int), the full name of the product, or the BNLS ID.
             """
         if not supported_products:
-            load_product_metadata(pkg_resources.resource_string(__name__, 'products.json'))
+            load_product_metadata()
 
         if isinstance(pid, str):
             pid = pid.upper()

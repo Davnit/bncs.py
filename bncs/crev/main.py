@@ -7,7 +7,7 @@ from .exception import CheckRevisionFailedError
 from .results import CheckRevisionResults
 from .seeds import find_version_byte
 
-from ..products import BncsProduct
+from ..products import supported_products, load_product_metadata
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
@@ -46,7 +46,7 @@ def format_crev_seed(formula, archive=None):
         return formula.decode('ascii')
 
     def fmt_bin():
-        return "0x" + formula.hex()
+        return "0x" + formula.hex().upper()
 
     if archive:
         version, _ = get_crev_version(archive)
@@ -124,9 +124,13 @@ class LocalHashingProvider:
         """
         if files is None:
             files = {}
-            for code, product in BncsProduct.all_products.items():
+            if not supported_products:
+                # Product metadata not loaded from resource yet
+                load_product_metadata()
+
+            for code, product in supported_products.items():
                 for platform, f_list in product.hashes.items():
-                    files[(platform, product)] = f_list
+                    files[(platform, code)] = f_list
 
         self.root = file_root           # Path to base directory where hashing files are located
         self.files = files              # Maps (platform, product) to a list of files used in hashing
@@ -259,7 +263,7 @@ class LocalHashingProvider:
         return await self.loop.run_in_executor(hashing_thread_pool, self.check_version_blocking,
                                                product, archive, formula, timestamp)
 
-    async def preload(self, pairs=None, include_lockdown=False):
+    async def preload(self, pairs=None, include_lockdown=False, version=CREV_LOCKDOWN):
         """
             Preloads the hashes managed by this provider.
             If pairs is an iterable of (platform, product) tuples then only those files will be loaded.
@@ -271,13 +275,21 @@ class LocalHashingProvider:
         for key, files in self.files.items():
             if pairs is None or key in pairs:
                 base = path.join(self.root, *key)
-                count += await preload([path.join(base, f) for f in files])
+                count += await preload([path.join(base, f) for f in files], version)
 
         if include_lockdown:
+            # Load the entire Lockdown folder
             base = path.join(self.root, "Lockdown")
             files = [f for f in listdir(base) if path.splitext(f)[1] == ".dll"]
-            self.log.info(f"Preloading heaps for {len(files)} Lockdown libraries. This may also take a while...")
+            self.log.info(f"Preloading heaps for {len(files)} Lockdown libraries.")
             count += await preload([path.join(base, f) for f in files], CREV_LOCKDOWN)
+
+        elif isinstance(version, str) and version.startswith("lockdown-"):
+            # Load only the Lockdown library associated with this versioning archive
+            version = version.replace(".mpq", ".dll")
+            archive = path.join(self.root, "Lockdown", version)
+            self.log.info(f"Preloading Lockdown library: {version}")
+            count += await preload([archive], CREV_LOCKDOWN)
 
         self.log.info(f"Preload complete. {count} files loaded.")
         self.connected = (count > 0)
