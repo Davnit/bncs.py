@@ -1,51 +1,55 @@
 
+import argparse
 import asyncio
 import logging
-import os.path
 import time
 
-from bncs.crev import crev_classic, crev_classic_slow, get_file_meta, CheckRevisionResults
+from bncs import LocalHashingProvider, BncsProduct
 from bnls import BnlsClient
 
 
-async def main():
+def print_result(t):
+    r, d = t.result()
+    print(f"Results: {r}")
+    print(f"Time taken: {d} seconds")
+
+
+async def main(args):
     logging.basicConfig(level=logging.DEBUG)
 
-    product = "D2DV"
-    mpq = "ver-IX86-1.mpq"
-    formula = "A=5 B=10 C=15 4 A=A+S B=B-C C=C+A A=A-B"
-    files = [r"C:\Users\David\Documents\Development\BNET\Hashes\D2DV\Game.exe"]
-
-    version, info = get_file_meta(files[0])
-    results = CheckRevisionResults(product)
-    results.checksum = 1    # Fake value so the output string passes success check
-    results.version = version
-    results.info = info
-    print("LOCAL: %s" % results)
-
-    client = BnlsClient()
-    await client.connect("jbls.davnit.net")
-    data = await client.check_version(product, 0, mpq, formula)
-    if data is None:
-        print("NOTICE! BNLS failed version check.")
+    # Seed can be either an ASCII string or a hex number
+    if args.seed[:2] == "0x" and ' ' not in args.seed:
+        seed = int(args.seed, 16).to_bytes(16, 'little', signed=False)
     else:
-        print("BNLS: %s" % data.check)
-    await client.disconnect()
+        seed = args.seed.encode('ascii')
 
-    print("Running FAST version check (%s) on file(s): %s" % (mpq, ', '.join([os.path.basename(f) for f in files])))
-    start = time.perf_counter()
-    checksum = crev_classic(formula, mpq, files)
-    end = time.perf_counter()
-    print("\tChecksum: %.8x" % checksum)
-    print("\tElapsed time: %.2f seconds" % (end - start))
+    product = BncsProduct.get(args.product)
+    local = LocalHashingProvider(args.hashes)
+    await local.preload([('IX86', product.code)], version=args.archive)
 
-    print("Running SLOW version check (%s) on file(s): %s" % (mpq, ', '.join([os.path.basename(f) for f in files])))
-    start = time.perf_counter()
-    checksum = crev_classic_slow(formula, mpq, files)
-    end = time.perf_counter()
-    print("\tChecksum: %.8x" % checksum)
-    print("\tElapsed time: %.2f seconds" % (end - start))
+    # remote = BnlsClient()
+    # await remote.connect()
+
+    async def run_test(src, tag):
+        print(f"Starting {tag} test on {product.code} with archive {args.archive}")
+        start = time.perf_counter()
+        result = await src.check_version(product.code, args.archive, seed)
+        duration = (time.perf_counter() - start)
+        return result, duration
+
+    task = asyncio.create_task(run_test(local, "LOCAL"))
+    task.add_done_callback(print_result)
+    await task
+
+    # remote.disconnect("done")
+    # await remote.wait_closed()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser()
+    parser.add_argument("product", type=str, help="4 digit product code")
+    parser.add_argument("archive", type=str, help="Name of the version checking archive")
+    parser.add_argument("seed", type=str, help="Version checking formula or hex value of the seed")
+    parser.add_argument("hashes", type=str, help="Path to root of hash file directory")
+
+    asyncio.run(main(parser.parse_args()))
