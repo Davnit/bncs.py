@@ -1,4 +1,6 @@
 
+import array
+import ctypes
 import struct
 
 
@@ -22,10 +24,6 @@ def lockdown_sha1(*data):
     return BnetSha1(lockdown=True).update(*data)
 
 
-def _rotl(num, shift, width=32):
-    return (num << shift & (2 ** width - 1)) | (num >> width - shift)
-
-
 """
     Sample values:
         Input: The quick brown fox jumps over the lazy dog
@@ -38,6 +36,9 @@ def _rotl(num, shift, width=32):
 """
 
 
+TRANSFORM_KEYS = [0x5a827999, 0x6ed9eba1, 0x8f1bbcdc, 0xca62c1d6]
+
+
 class BnetSha1:
     digest_size = 20
     block_size = 64
@@ -45,73 +46,95 @@ class BnetSha1:
     def __init__(self, lockdown=False):
         self.lockdown = lockdown
         self.name = "lockdown-sha1" if lockdown else "bnet-sha1"
-        self._buffer = [0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0]
-        self._block = bytearray()
-        self._length = 0
-        self.finalized = False
+
+        self._state = [0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0]
+        self._length = 0                # Total length of all data passed into the hash
+
+        self._buffer = memoryview(bytearray(self.block_size))       # The input buffer
+        self._position = 0                                          # Position in the input buffer
 
     def debug(self):
-        return struct.pack('<5L', *self._buffer).hex()
+        return struct.pack('<5L', *self._state).hex()
 
-    def digest(self, finalize=False):
-        buffer = self._buffer
+    def digest(self):
+        state = array.array('L', self._state)
 
-        if len(self._block) > 0:
-            block = self._block
+        if len(self._buffer) > 0:
+            # There is uncommitted data, process it.
+            block = bytearray(self._buffer)
+            position = self._position
 
             # If there is less than a block of data, pad it.
             if self.lockdown:
-                length = self._length + len(block)
-
                 # Standard SHA-1 padding
-                if len(block) > 55:
+                if position > 55:
                     # Not enough room for the tail, finish this block and then do another.
-                    block += b'\x80' + bytes(self.block_size - len(block) - 1)
-                    buffer = self._transform(buffer, block)
-                    block = block[64:]
+                    block[position] = 0x80
+                    block[position+1:] = bytes(self.block_size - position - 1)
+                    self._transform(state, block)
+                    position = 0
                 else:
-                    block += b'\x80'
+                    block[position] = 0x80
+                    position += 1
 
-                block += bytes(self.block_size - len(block) - 8)
-                block += struct.pack('<Q', length * 8)
+                # Pad the block and add the full data length at the end
+                length = self._length + self._position
+                block[position:] = bytes(self.block_size - position - 8) + struct.pack('<Q', length * 8)
             else:
                 # xSHA padding
-                block += bytes(self.block_size - len(block))
+                block[position:] = bytes(self.block_size - position)
 
-            # Transform with the padding (but do not commit!)
-            buffer = self._transform(buffer, block)
+            # Transform with the padding
+            self._transform(state, block)
 
-        if finalize:
-            self._block = bytearray()
-            self._buffer = buffer
-            self.finalized = True
-
-        return struct.pack(f'<{self.digest_size // 4}L', *buffer[0:5])
+        return struct.pack(f'<{self.digest_size // 4}L', *state[:5])
 
     def hexdigest(self):
         return self.digest().hex()
 
     def update(self, *data):
-        self._block += b''.join(data)
+        for item in (data,) if not isinstance(data, tuple) else data:
+            while len(item) > 0:
+                # Add as much data to the input buffer as will fit
+                length = min(len(item), self.block_size - self._position)
+                self._buffer[self._position:self._position+length] = item[:length]
+                self._position += length
 
-        while len(self._block) >= self.block_size:
-            self._buffer[0:5] = self._transform(self._buffer, self._block)
-            self._block = self._block[64:]
-            self._length += 64
+                # If the input buffer is full, process it.
+                if self._position == self.block_size:
+                    self._transform(self._state, self._buffer.obj)
+                    self._length += self.block_size
+                    self._position = 0
+
+                # If the whole item wouldn't fit, trim it for the next round
+                item = item[length:]
 
         return self
 
-    def _transform(self, buffer, block):
-        w = [0] * 80
-        w[0:16] = struct.unpack_from('<16L', block, 0)
+    def copy(self):
+        new = BnetSha1(self.lockdown)
+        new._state = list(self._state)
+        new._buffer = memoryview(bytearray(self._buffer))
+        new._length = self._length
+        new._position = self._position
+        return new
 
-        for i in range(16, 80):
+    def _transform(self, state, buffer):
+        # Copy bytes from the input buffer into ints
+        w = array.array('L', buffer)
+        w.extend([0] * self.block_size)
+
+        # Xors
+        for i in range(len(w) - self.block_size, len(w)):
             value = (w[i - 16] ^ w[i - 8] ^ w[i - 14] ^ w[i - 3])
-            w[i] = _rotl(value, 1) if self.lockdown else _rotl(1, value & 31)
+            if self.lockdown:
+                w[i] = (value >> 0x1f) | ctypes.c_ulong((value << 1)).value
+            else:
+                w[i] = 1 << (value & 31)
 
-        keys = [0x5a827999, 0x6ed9eba1, 0x8f1bbcdc, 0xca62c1d6]
-        a, b, c, d, e = buffer[0:5]
-        for i in range(0, 80):
+        a, b, c, d, e = state[:5]
+        for i in range(len(w)):
+            # Steps - different operations for different blocks of the transform
             if i < 20:
                 dw = (b & c) | (~b & d)
             elif i < 40:
@@ -121,8 +144,11 @@ class BnetSha1:
             else:
                 dw = b ^ c ^ d
 
-            dw = (_rotl(a, 5) + dw + e + w[i] + keys[i // 20]) % (2 ** 32)
-            a, b, c, d, e = (dw, a, _rotl(b, 0x1e), c, d)
+            # Key and shuffle
+            dw = (((a << 5) | (a >> 0x1b)) + dw + e + w[i] + TRANSFORM_KEYS[i // 20]) % (2 ** 32)
+            a, b, c, d, e = (dw, a, (b >> 2) | (b << 0x1e), c, d)
 
+        # Replace
         finals = (a, b, c, d, e)
-        return [(buffer[i] + finals[i]) & 0xffffffff for i in range(5)]
+        for i in range(5):
+            state[i] = (state[i] + finals[i]) & 0xffffffff
