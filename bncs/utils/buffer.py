@@ -80,12 +80,7 @@ def format_buffer(data):
 
 class DataBuffer:
     def __init__(self, data=None):
-        if isinstance(data, (bytes, bytearray)):
-            self.data = bytes(data)
-        elif data is None:
-            self.data = b''
-        else:
-            raise TypeError("Unsupported data buffer initialization type: %s" % type(data).__name__)
+        self.data = bytearray(data or b'')
 
     def __len__(self):
         return len(self.data)
@@ -101,9 +96,7 @@ class DataBuffer:
 
             Accepts str, bytes, and DataBuffer/DataReader objects.
         """
-        if isinstance(data, str):
-            self.data += data.encode('ascii')
-        elif isinstance(data, (DataBuffer, DataReader)):
+        if isinstance(data, (DataBuffer, DataReader)):
             self.data += data.data
         else:
             self.data += data
@@ -155,14 +148,12 @@ class DataBuffer:
 
     def clear(self):
         """ Clears all data from the buffer. """
-        self.data = b''
+        self.data = bytearray()
 
 
 class DataReader:
-    def __init__(self, data=b''):
-        if not isinstance(data, (bytes, bytearray)):
-            raise TypeError("Unsupported data reader initialization type: %s" % type(data).__name__)
-        self.data = bytes(data)
+    def __init__(self, data=None):
+        self.data = bytearray(data or b'')
         self.position = 0
 
     @classmethod
@@ -193,7 +184,7 @@ class DataReader:
         r = self.data[self.position:(self.position + length)]
         if not peek:
             self.position += length
-        return r
+        return bytes(r)
 
     def get_byte(self, peek=False):
         """ Returns the next byte from the buffer. """
