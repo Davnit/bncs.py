@@ -26,15 +26,6 @@ class InvalidFormulaError(CheckRevisionFailedError):
         self.formula = formula
 
 
-def pad_desc(data):
-    data = bytearray(data)
-    value = 0xFF
-    while len(data) % 1024 != 0:
-        data.append(value)
-        value = 0xFF if value == 0 else (value - 1)
-    return data
-
-
 def get_hashcode(mpq):
     """Returns the hash code (seed value?) for the specified MPQ filename."""
     num = 0
@@ -63,6 +54,29 @@ def get_file_version_and_info(file):
     info = "%s %s %i" % (path.basename(file), dt.strftime("%m/%d/%y %H:%M:%S"), size)
 
     return ver, info
+
+
+def do_op(op, var1, var2):
+    res = var1 ^ var2 if op == '^' else var1 + var2 if op == '+' else \
+        var1 - var2 if op == '-' else var1 * var2 if op == '*' else var1 // var2
+    return res & 0xffffffffffffffff
+
+
+FILE_BLOCK_SIZE = 1024
+
+
+def read_file_gen(handle, version=2):
+    while data := handle.read(FILE_BLOCK_SIZE):
+        if len(data) < FILE_BLOCK_SIZE:
+            # Reached EOF and file is not aligned
+            if version == 2:
+                # Pad this last block to 1024 bytes with descending byte values from 0xff
+                data = (data + (bytes(range(0xff, -1, -1)) * 4))[:FILE_BLOCK_SIZE]
+            elif version == 1:
+                # No more full blocks, stop here.
+                break
+
+        yield from iter(struct.unpack('<%iI' % (1024 // 4,), data))
 
 
 def check_version(formula, mpq, files):
@@ -112,35 +126,13 @@ def check_version(formula, mpq, files):
 
     for file in files:
         with open(file, 'rb') as fh:
-            # TODO: Don't load the entire hash file into memory at once
-            data = fh.read()
-
-        # For some MPQs, pad the file to 1024-byte intervals of descending byte values.
-        if mpq.startswith("ver"):
-            data = pad_desc(data)
-
-        for i in range(0, len(data), 4):
-            s = 0
-            s |= ((data[i + 0] << 0) & 0x000000ff)
-            s |= ((data[i + 1] << 8) & 0x0000ff00)
-            s |= ((data[i + 2] << 16) & 0x00ff0000)
-            s |= ((data[i + 3] << 24) & 0xff000000)
-
-            z = opc[0]
-            a = a ^ s if z == '^' else a + s if z == '+' else a - s if z == '-' else a * s if z == '*' else a // s
-            a &= 0xffffffffffffffff
-
-            z = opc[1]
-            b = b ^ c if z == '^' else b + c if z == '+' else b - c if z == '-' else b * c if z == '*' else b // c
-            b &= 0xffffffffffffffff
-
-            z = opc[2]
-            c = c ^ a if z == '^' else c + a if z == '+' else c - a if z == '-' else c * a if z == '*' else c // a
-            c &= 0xffffffffffffffff
-
-            z = opc[3]
-            a = a ^ b if z == '^' else a + b if z == '+' else a - b if z == '-' else a * b if z == '*' else a // b
-            a &= 0xffffffffffffffff
+            # Read the file as 32-bit ints, in 1024-byte blocks, padding with either 0's or descending byte values
+            # CRev v1 uses 0's, v2 uses descending bytes from 0xff to 0x00
+            for s in read_file_gen(fh, 2 if mpq.startswith("ver") else 1):
+                a = do_op(opc[0], a, s)
+                b = do_op(opc[1], b, c)
+                c = do_op(opc[2], c, a)
+                a = do_op(opc[3], a, b)
 
     check = int(c) & 0xffffffff
     return check
@@ -180,32 +172,12 @@ def check_version_slow(formula, mpq, files):
 
     for file in files:
         with open(file, 'rb') as fh:
-            data = fh.read()
+            # Same file read method, just using the dynamic value lookup instead of fixed variables
+            for s in read_file_gen(fh, 2 if mpq.startswith("ver") else 1):
+                values['S'] = s
 
-        if mpq.startswith("ver"):
-            data = pad_desc(data)
-
-        for i in range(0, len(data), 4):
-            s = 0
-            s |= ((data[i + 0] << 0) & 0x000000ff)
-            s |= ((data[i + 1] << 8) & 0x0000ff00)
-            s |= ((data[i + 2] << 16) & 0x00ff0000)
-            s |= ((data[i + 3] << 24) & 0xff000000)
-            values['S'] = s
-
-            for mod in modifiers:
-                op = mod[2]
-
-                if op == '^':
-                    values[mod[0]] = (values[mod[1]] ^ values[mod[3]]) & 0xffffffffffffffff
-                elif op == '+':
-                    values[mod[0]] = (values[mod[1]] + values[mod[3]]) & 0xffffffffffffffff
-                elif op == '-':
-                    values[mod[0]] = (values[mod[1]] - values[mod[3]]) & 0xffffffffffffffff
-                elif op == '*':
-                    values[mod[0]] = (values[mod[1]] * values[mod[3]]) & 0xffffffffffffffff
-                elif op == '/':
-                    values[mod[0]] = (values[mod[1]] // values[mod[3]]) & 0xffffffffffffffff
+                for mod in modifiers:
+                    values[mod[0]] = do_op(mod[2], mod[1], mod[3])
 
     check = values[check_var] & 0xffffffff
     return check
