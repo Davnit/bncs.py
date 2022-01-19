@@ -122,15 +122,18 @@ class BnetSha1:
     def _transform(self, state, buffer):
         # Copy bytes from the input buffer into ints
         w = array.array('L', buffer)
-        w.extend([0] * self.block_size)
 
-        # Xors
-        for i in range(len(w) - self.block_size, len(w)):
-            value = (w[i - 16] ^ w[i - 8] ^ w[i - 14] ^ w[i - 3])
-            if self.lockdown:
-                w[i] = (value >> 0x1f) | ctypes.c_ulong((value << 1)).value
-            else:
-                w[i] = 1 << (value & 31)
+        if any(buffer):
+            # Some value in the input is non-zero
+            w.extend([0] * self.block_size)
+            for i in range(len(w) - self.block_size, len(w)):
+                value = (w[i - 16] ^ w[i - 8] ^ w[i - 14] ^ w[i - 3])
+                if self.lockdown:
+                    w[i] = (value >> 0x1f) | ctypes.c_ulong(value << 1).value
+                else:
+                    w[i] = 1 << (value & 31)
+        else:
+            w.extend([0 if self.lockdown else 1] * self.block_size)
 
         a, b, c, d, e = state[:5]
         for i in range(len(w)):
