@@ -315,7 +315,7 @@ class W3KeyDecoder(KeyDecoder):
         super().__init__(key)
         if len(key) != 26:
             raise ValueError("W3 key decoder only valid for 26-character keys")
-        self.private = [0] * 10
+        self.private = bytes(10)
 
     def get_hash(self, client_token, server_token):
         if not super().get_hash(client_token, server_token):
@@ -326,7 +326,7 @@ class W3KeyDecoder(KeyDecoder):
 
     def decode(self):
         key = list(self.key)
-        digits_b5 = [0] * 52
+        digits_b5 = bytearray(52)       # buffer, 2x key length
 
         for i in range(0, 26):
             if key[i] not in self.CHARS:
@@ -341,7 +341,7 @@ class W3KeyDecoder(KeyDecoder):
             n = n * 5 + digits_b5[i]
 
         b = n.to_bytes(16, byteorder='little')
-        nibbles = [0] * 30
+        nibbles = bytearray(30)
         for i in range(0, 15):
             for j in range(0, 2):
                 nibbles[(i << 1) + j] = ((b[i] >> (j << 2)) & 0xf) & 0xff
@@ -360,7 +360,7 @@ class W3KeyDecoder(KeyDecoder):
             nibbles[r] = perm[c]
 
         length = (len(nibbles) >> 1) - 1
-        tmp = [0] * (length + 1)
+        tmp = bytearray(length + 1)
         for i in range(0, length + 1):
             ni = i << 1
             tmp[i] = nibbles[ni] | (nibbles[ni | 1] << 4)
@@ -375,19 +375,16 @@ class W3KeyDecoder(KeyDecoder):
             bits[i] = bits[j]
             bits[j] = b
 
-        bb = [0] * 15
+        bb = bytearray(16)
         for i in range(0, 15):
             for j in range(0, 8):
                 if bits[(i << 3) + j]:
-                    bb[i] = bb[i] | ((0x01 << j) & 0xff)
+                    bb[i] = bb[i] | ((1 << j) & 0xff)
 
-        if bb[0x0E] == 0x00:
-            self.product = bb[0x0D] >> (0x0A & 7)
-            self.public = unpack('<L', bytes(bb[0x0A:0x0A+4]))[0] & 0xffffff
-
-            self.private = [0] * 10
-            for i in range(0, 10):
-                self.private[i] = bb[self.ORDER[i]]
+        if bb[14] == 0:
+            self.product = bb[13] >> 2
+            self.public = unpack('<L', bytes(bb[10:14]))[0] & 0x03ffffff
+            self.private = bytes(bb[self.ORDER[i]] for i in range(10))
             return True
 
         return False
@@ -397,11 +394,11 @@ class W3KeyDecoder(KeyDecoder):
         if isinstance(private, int):
             private = private.to_bytes(10, 'little')
 
-        bb = [0] * 15
+        bb = bytearray(16)
         for i in range(0, 10):
             bb[cls.ORDER[i]] = private[i]
-        bb[0x0A:0x0D] = pack('<L', public)[:3]
-        bb[0x0D] = product << 2
+        bb[10:14] = pack('<L', public)
+        bb[13] = bb[13] | (product << 2)
 
         bits = [bit == '1' for bit in ''.join(format(byte, '08b')[::-1] for byte in bb)]
         for i in range(0, 120):
@@ -413,7 +410,7 @@ class W3KeyDecoder(KeyDecoder):
             bits[i] = bits[j]
             bits[j] = b
 
-        nibbles = [0] * 30
+        nibbles = bytearray(30)
         for i in range(0, 30):
             for j in range(3, -1, -1):
                 if bits[i * 4 + j]:
@@ -433,13 +430,13 @@ class W3KeyDecoder(KeyDecoder):
             nibbles[r] = c
 
         length = (len(nibbles) >> 1) - 1
-        tmp = [0] * (length + 1)
+        tmp = bytearray(length + 1)
         for i in range(0, length + 1):
             ni = i << 1
             tmp[i] = nibbles[ni] | (nibbles[ni | 1] << 4)
 
         n = int.from_bytes(tmp, byteorder='little')
-        digits_b5 = [0] * 52
+        digits_b5 = bytearray(52)
         for i in range(0, 52):
             digits_b5[i] = n % 5
             n = (n - digits_b5[i]) // 5
