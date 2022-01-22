@@ -354,7 +354,8 @@ class BnetClient(AsyncClientBase):
                 return user
 
     def check_config(self, key, override=None, default=None, require=True):
-        value = self.config.get(key, default) if override is None else override
+        value = self.config.get(key) if override is None else override
+        value = default if value is None else value
         if value is None and require:
             raise ValueError(f"missing required config parameter: {key}")
         return value
@@ -884,9 +885,12 @@ class BnetClient(AsyncClientBase):
         self.state["channels"] = await self.request_channel_list(product.code)
 
         # Uses 'force join' flag if a home channel is explicitly set, otherwise 'first join'
-        home_join_flags = product.home_flags \
-            if (channel is None and "home_channel" not in self.config) else ChannelJoinFlags.Forced
-        home_channel = self.check_config("home_channel", channel, product.home_channel)
+        home_join_flags = ChannelJoinFlags.Forced
+        home_channel = self.check_config("home_channel", channel, require=False)
+        if home_channel is None:
+            home_channel = product.home_channel
+            home_join_flags = product.home_flags
+
         await self.join_channel(home_channel, home_join_flags)
 
         try:
@@ -923,6 +927,7 @@ class BnetClient(AsyncClientBase):
         x0c.insert_dword(flags)
         x0c.insert_string(channel)
         await self.send(x0c)
+        self.log.debug(f"Joining channel '{channel}' with flags '{ChannelJoinFlags(flags).name}'...")
 
     async def send_command(self, command):
         # https://bnetdocs.org/packet/360/sid-chatcommand
