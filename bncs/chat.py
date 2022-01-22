@@ -1,4 +1,6 @@
 
+from .products import BncsProduct
+
 import enum
 
 # Event ID constants (EID)
@@ -88,15 +90,19 @@ class UserFlags(enum.IntFlag):
 
 
 class ChatUser:
-    def __init__(self, username, flags=0, ping=0, statstring=None):
+    def __init__(self, username, flags=0, ping=0, stats=None):
         self.name = username
         self.flags = flags
         self.ping = ping
-        self.statstring = statstring
+        self.stats = stats
 
         self.ip_address = None
         self.account_id = None
-        self.regauth = None
+        self.registrar = None
+
+    @property
+    def product(self):
+        return BncsProduct.get(self.stats[:4])
 
 
 class ChatEvent:
@@ -113,7 +119,7 @@ class ChatEvent:
         # Deprecated fields, may be supported on some private servers
         self.ip_address = user.ip_address if user else None
         self.account_id = user.account_id if user else None
-        self.regauth = user.regauth if user else None
+        self.registrar = user.registrar if user else None
 
     def __repr__(self):
         s = f"<BncsChatEvent eid={self.eid.name}, " \
@@ -124,8 +130,8 @@ class ChatEvent:
             s += f", ip={self.ip_address}"
         if self.account_id != 0xbaadf00d:
             s += f", account={self.account_id}"
-        if self.regauth != 0xbaadf00d:
-            s += f", authority={self.regauth}",
+        if self.registrar != 0xbaadf00d:
+            s += f", authority={self.registrar}",
 
         s += f", username='{self.username}', text='{self.text}'>"
         return s
@@ -149,7 +155,7 @@ class ChatEvent:
         else:
             pak.insert_ipv4(self.ip_address or 0)
             pak.insert_dword(self.account_id or hidden_value)
-            pak.insert_dword(self.regauth or hidden_value)
+            pak.insert_dword(self.registrar or hidden_value)
 
         pak.insert_string(self.username)
         pak.insert_string(self.text, encoding=self.text_encoding)
@@ -169,7 +175,7 @@ class ChatEvent:
         event.ping = packet.get_dword()
         event.ip_address = packet.get_ipv4()
         event.account_id = packet.get_dword()
-        event.regauth = packet.get_dword()
+        event.registrar = packet.get_dword()
         event.username = packet.get_string()
 
         # If ping is max value, set it to -1
