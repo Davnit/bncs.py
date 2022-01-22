@@ -18,14 +18,11 @@ class RealmClientStatus(enum.IntEnum):
 
 
 class McpClient(AsyncClientBase):
-    def __init__(self, host, port, *, logger=None, **config):
+    def __init__(self, *, logger=None, **config):
         logger = logger or logging.getLogger("MCP")
         AsyncClientBase.__init__(self, McpReader, logger=logger)
 
         self.config = {
-            "server": host,
-            "port": port,
-
             "keep_alive_interval": 480
         }
         if config:

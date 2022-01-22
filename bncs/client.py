@@ -233,7 +233,7 @@ class BnetClient(AsyncClientBase):
             self.config.update(config)
 
         self.hashing_provider = hashing or BnlsClient()
-        self.realm = None
+        self.realm = McpClient()
 
         self.packet_handlers.update({
             SID_NULL: self._handle_null,
@@ -1263,8 +1263,8 @@ class BnetClient(AsyncClientBase):
             msg = 'not logged in' if self.status < ClientStatus.LoggedIn else 'already in chat'
             raise BncsProtocolError(err_header, msg)
 
-        if self.realm is not None:
-            raise BncsProtocolError("Cannot join realm", "client is already joined to a realm")
+        if self.realm.connected:
+            raise BncsProtocolError("Cannot join realm", "client is already connected to a realm")
 
         c_token = self.state["client_token"]
         s_token = self.state["server_token"]
@@ -1294,9 +1294,7 @@ class BnetClient(AsyncClientBase):
         startup_data += reply.get_raw(48) + reply.get_string(encoding=None)
 
         # Create a realm client and attempt a connection
-        self.realm = McpClient(realm_ip, realm_port)
-        if not await self.realm.connect():
-            self.realm = None
+        if not await self.realm.connect(realm_ip, realm_port):
             return False
         self.state["realm_name"] = realm
         return await self.realm.startup(startup_data, timeout=timeout)
