@@ -3,7 +3,7 @@ import logging
 from struct import pack, unpack
 from tempfile import TemporaryFile
 
-from utils import make_dword, unmake_dword
+from .utils import make_dword, unmake_dword
 
 from PIL import Image as ImageProc, UnidentifiedImageError
 

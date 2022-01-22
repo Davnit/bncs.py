@@ -5,6 +5,8 @@ from . import hashing
 from . import packets
 from . import utils
 
+from .bni import BnetIconFile, IconEntry
+
 from .chat import ChatUser, ChatEvent, ChatEventType, ChannelFlags, UserFlags
 
 from .client import BnetClient, BncsProtocolError, ClientStatus, ClientAuthResult, \
