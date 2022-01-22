@@ -45,8 +45,14 @@ class AsyncClientBase(abc.ABC):
 
         # Open the connection
         self.log.info(f"Connecting to '{host}' on port {port}...")
-        self._reader, self._writer = \
-            await asyncio.open_connection(host, port, family=socket.AF_INET)      # BNET only supports IPv4
+        try:
+            self._reader, self._writer = \
+                await asyncio.open_connection(host, port, family=socket.AF_INET)      # BNET only supports IPv4
+        except Exception as ex:
+            self.log.error(f"Connection failed - {ex}")
+            self._connected = False
+            return False
+
         self.state["remote_ip"] = self._writer.get_extra_info('peername')[0]
         self.state["local_ip"] = self._writer.get_extra_info('sockname')[0]
 

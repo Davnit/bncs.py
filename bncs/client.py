@@ -405,7 +405,7 @@ class BnetClient(AsyncClientBase):
         """
         self.config.update(**options)
 
-        if await self.connect(host):
+        if self.connected or await self.connect(host):
             if await self.authenticate(product, keys, method=method, timeout=timeout) == ClientAuthResult.Passed:
                 # Attempt login - if the account doesn't exist, try to create it
                 for attempt in range(2):
