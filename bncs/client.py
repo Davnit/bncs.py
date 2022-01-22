@@ -418,10 +418,8 @@ class BnetClient(AsyncClientBase):
                     break
 
                 # If a realm is configured, try and connect to it
-                if "realm_name" in self.config:
-                    realm_to_join = self.config["realm_name"]
-
-                    realms = await self.request_realm_list(timeout)
+                if realm_to_join := self.config.get("realm_name"):
+                    realms = [r[0] for r in await self.request_realm_list(timeout)]
                     if realm_to_join in realms and await self.join_realm(realm_to_join, timeout=timeout):
                         chars = await self.realm.request_character_list(timeout=timeout)
 
