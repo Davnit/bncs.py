@@ -32,6 +32,10 @@ class McpClient(AsyncClientBase):
             MCP_NULL: self._handle_null
         })
 
+        self.state = {
+            "status": RealmClientStatus.NotConnected
+        }
+
     @property
     def character_list(self):
         return list(self.state.get("characters", {}).keys())
