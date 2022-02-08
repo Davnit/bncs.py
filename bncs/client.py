@@ -1304,7 +1304,13 @@ class BnetClient(AsyncClientBase):
 
     async def _handle_ping(self, packet):
         # S->C https://bnetdocs.org/packet/164/sid-ping
-        await self.send_ping(packet.get_dword())
+        last_ping = self.state.get("last_ping_time")
+        now = datetime.now()
+        if last_ping is None or (now - last_ping).total_seconds() > 10:
+            self.state["last_ping_time"] = now
+            await self.send_ping(packet.get_dword())
+        else:
+            self.log.warning("server ping ignored to avoid flood")
 
     async def _handle_logon_challenge_ex(self, packet):
         # https://bnetdocs.org/packet/286/sid-logonchallengeex
