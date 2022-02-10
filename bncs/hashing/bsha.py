@@ -30,9 +30,7 @@ def lockdown_sha1(*data):
         XSha1: a0db6e70616033a7b5fdda37cee2d43f2da10288
         LSha1: a868fb6c0d95c48d037e9f08ce6e4200fd435fa4
         
-    Unlike some implementations of this hash, this one will not modify the buffer when calling digest(),
-        so it is a safe operation. You can optionally pass finalize=True to the digest() call to override
-        this behavior.
+    Unlike some implementations of this hash, this one will not modify the object state when calling digest().
 """
 
 
@@ -59,7 +57,7 @@ class BnetSha1:
     def digest(self):
         state = array.array('L', self._state)
 
-        if len(self._buffer) > 0:
+        if self._position > 0:
             # There is uncommitted data, process it.
             block = bytearray(self._buffer)
             position = self._position
